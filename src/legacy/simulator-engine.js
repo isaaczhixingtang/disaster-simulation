@@ -122,7 +122,7 @@ let scene, camera, renderer, controls, raycaster, mouse, ground, grid;
         }
 
         // Build/destroy tools
-        const DESTROY_TOOLS = new Set(['fire','vortex','quake','tsunami','volcano','lavaflood','napalm','cluster','nuke','blackhole','meteor','cracker','monarch','mothership','leviathan','kraken','maw']);
+        const DESTROY_TOOLS = new Set(['fire','vortex','quake','tsunami','volcano','lavaflood','napalm','cluster','nuke','blackhole','meteor','cracker','monarch','battleship','mothership','leviathan','kraken','maw']);
 
         function addMultiTarget(pt) {
             multiTargets.push(pt.clone());
@@ -1918,6 +1918,8 @@ let scene, camera, renderer, controls, raycaster, mouse, ground, grid;
                 spawnPlanetCracker(pt);
             } else if (type === 'monarch') {
                 spawnMonarch(pt);
+            } else if (type === 'battleship') {
+                spawnAncientBattleship(pt);
             } else if (type === 'mothership') {
                 spawnMothership(pt);
             } else if (type === 'leviathan') {
@@ -1934,12 +1936,15 @@ let scene, camera, renderer, controls, raycaster, mouse, ground, grid;
                 explode(pt, 45, 0xff7700);
                 applyBlast(pt, 60, 0.2, 0.05, 30, true, true); // mostly fire, low force
                 igniteRadius(pt, 60);
+                survivalDamageAtPoint(pt, 60, 26, 'napalm blast', 900);
+                addSurvivalHazard('napalmFire', pt, 60, 10000);
             } else if (type === 'cluster') {
                 for(let i=0; i<10; i++) {
                     setTimeout(() => {
                         const p = pt.clone().add(new THREE.Vector3((Math.random()-0.5)*75, 0, (Math.random()-0.5)*75));
                         explode(p, 18, 0xffffff);
                         applyBlast(p, 35, 8, 1.5, 150);
+                        survivalDamageAtPoint(p, 35, 32, 'cluster blast', 700);
                     }, i * 200);
                 }
             } else if (type === 'nuke') {
@@ -3054,6 +3059,7 @@ let scene, camera, renderer, controls, raycaster, mouse, ground, grid;
                     if (ms.phaseTimer % 8 === 0) {
                         const ringRadius = 35 + ms.phaseTimer * 0.8;
                         explode(ms.target, 8 + ms.phaseTimer * 0.35, 0x9ffbff);
+                        survivalDamageAtPoint(ms.target, Math.min(82, ringRadius), 47, 'UFO laser', 900);
                         worldObjects.forEach(obj => {
                             if (obj.userData.frozen || obj.userData.hp <= 0) return;
                             const d = obj.position.distanceTo(ms.target);
@@ -3110,11 +3116,309 @@ let scene, camera, renderer, controls, raycaster, mouse, ground, grid;
                             const bolt = makeBeamBetween(d.group.position, boltEnd, 1.6, 0x5ff5ff, 0.86);
                             setTimeout(() => scene.remove(bolt), 95);
                             applyBlast(boltEnd, 16, 5, 1.2, 420, false, true);
+                            survivalDamageAtPoint(boltEnd, 14, 19, 'drone laser', 650);
                             if (Math.random() < 0.35) shatter(boltEnd, 4, 0x7f9aaa, 1.1);
                         }
                     }
                     d.group.lookAt(ms.target.x, 0, ms.target.z);
                 });
+            }
+        }
+
+        // ===== ANCIENT BATTLESHIP: warp-in laser and plasma artillery =====
+        let ancientBattleships = [];
+
+        function createWarpFlash(pos, color = 0xeafcff, radius = 46) {
+            const flash = new THREE.Mesh(
+                new THREE.SphereGeometry(1, 24, 16),
+                new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.92, blending: THREE.AdditiveBlending })
+            );
+            flash.position.copy(pos);
+            scene.add(flash);
+            let age = 0;
+            const anim = setInterval(() => {
+                age++;
+                const s = 1 + age * radius * 0.06;
+                flash.scale.set(s, s, s);
+                flash.material.opacity = Math.max(0, 0.92 - age * 0.075);
+                if (age > 13) {
+                    scene.remove(flash);
+                    flash.geometry.dispose();
+                    flash.material.dispose();
+                    clearInterval(anim);
+                }
+            }, 28);
+        }
+
+        function createBattleshipCrater(pos, radius = 20) {
+            const crater = new THREE.Mesh(
+                new THREE.CylinderGeometry(radius, radius * 0.72, 0.18, 36),
+                new THREE.MeshBasicMaterial({ color: 0x071018, transparent: true, opacity: 0.68 })
+            );
+            crater.position.set(pos.x, 0.08, pos.z);
+            scene.add(crater);
+            const glow = new THREE.Mesh(
+                new THREE.TorusGeometry(radius * 0.72, 0.9, 8, 42),
+                new THREE.MeshBasicMaterial({ color: 0x9ffbff, transparent: true, opacity: 0.5, blending: THREE.AdditiveBlending })
+            );
+            glow.rotation.x = Math.PI / 2;
+            glow.position.set(pos.x, 0.22, pos.z);
+            scene.add(glow);
+            let life = 1;
+            const fade = setInterval(() => {
+                life -= 0.018;
+                crater.material.opacity = life * 0.68;
+                glow.material.opacity = life * 0.5;
+                glow.scale.setScalar(1 + (1 - life) * 0.35);
+                if (life <= 0) {
+                    scene.remove(crater);
+                    scene.remove(glow);
+                    crater.geometry.dispose();
+                    crater.material.dispose();
+                    glow.geometry.dispose();
+                    glow.material.dispose();
+                    clearInterval(fade);
+                }
+            }, 80);
+        }
+
+        function makeAncientBattleshipModel() {
+            const group = new THREE.Group();
+            const hullMat = new THREE.MeshStandardMaterial({ color: 0x0b1016, roughness: 0.38, metalness: 0.92, emissive: 0x02070c, emissiveIntensity: 0.7 });
+            const armorMat = new THREE.MeshStandardMaterial({ color: 0x171f2a, roughness: 0.34, metalness: 0.88, emissive: 0x03131e, emissiveIntensity: 0.35 });
+            const glowMat = new THREE.MeshBasicMaterial({ color: 0xcdfdff, transparent: true, opacity: 0.86, blending: THREE.AdditiveBlending });
+            const panelMat = new THREE.MeshBasicMaterial({ color: 0x76eaff, transparent: true, opacity: 0.42, blending: THREE.AdditiveBlending });
+            const shieldMat = new THREE.MeshBasicMaterial({ color: 0xaeeeff, transparent: true, opacity: 0.16, blending: THREE.AdditiveBlending, side: THREE.DoubleSide });
+
+            const mid = new THREE.Mesh(new THREE.BoxGeometry(32, 11, 54), hullMat);
+            mid.castShadow = true;
+            group.add(mid);
+            const prow = new THREE.Mesh(new THREE.ConeGeometry(18, 42, 4), armorMat);
+            prow.rotation.x = -Math.PI / 2;
+            prow.position.z = -47;
+            prow.scale.x = 1.3;
+            prow.castShadow = true;
+            group.add(prow);
+            const stern = new THREE.Mesh(new THREE.BoxGeometry(42, 13, 20), armorMat);
+            stern.position.z = 36;
+            stern.castShadow = true;
+            group.add(stern);
+
+            const spine = new THREE.Mesh(new THREE.BoxGeometry(8, 4, 82), armorMat);
+            spine.position.y = 8;
+            spine.position.z = -7;
+            group.add(spine);
+
+            const banks = [];
+            for (const side of [-1, 1]) {
+                for (let i = 0; i < 4; i++) {
+                    const bank = new THREE.Mesh(new THREE.BoxGeometry(3.5, 2.2, 11), panelMat.clone());
+                    bank.position.set(side * 18.5, -1.5, -20 + i * 13);
+                    group.add(bank);
+                    banks.push(bank);
+                }
+                const wing = new THREE.Mesh(new THREE.BoxGeometry(17, 3.2, 46), hullMat);
+                wing.position.set(side * 25, 0, -1);
+                wing.rotation.z = side * 0.12;
+                group.add(wing);
+            }
+
+            for (let i = 0; i < 7; i++) {
+                const panel = new THREE.Mesh(new THREE.BoxGeometry(28 - Math.abs(i - 3) * 2, 0.35, 2.2), panelMat.clone());
+                panel.position.set(0, 6.2, -35 + i * 12);
+                group.add(panel);
+            }
+
+            const core = new THREE.Mesh(new THREE.SphereGeometry(7.2, 20, 14), glowMat.clone());
+            core.position.set(0, -8.6, 9);
+            group.add(core);
+            const coreRing = new THREE.Mesh(new THREE.TorusGeometry(10.5, 0.8, 8, 36), glowMat.clone());
+            coreRing.rotation.x = Math.PI / 2;
+            coreRing.position.copy(core.position);
+            group.add(coreRing);
+
+            const shield = new THREE.Mesh(new THREE.SphereGeometry(58, 32, 18), shieldMat);
+            shield.scale.set(1.15, 0.42, 1.5);
+            group.add(shield);
+
+            const coreLight = new THREE.PointLight(0xbdf8ff, 6, 190);
+            coreLight.position.copy(core.position);
+            group.add(coreLight);
+
+            return { group, banks, core, coreRing, shield, coreLight };
+        }
+
+        function faceBattleshipHorizontally(group, target) {
+            const dx = target.x - group.position.x;
+            const dz = target.z - group.position.z;
+            if (Math.abs(dx) + Math.abs(dz) > 0.001) {
+                group.rotation.set(0, Math.atan2(dx, dz), 0);
+            } else {
+                group.rotation.x = 0;
+                group.rotation.z = 0;
+            }
+        }
+
+        function spawnAncientBattleship(pt) {
+            const model = makeAncientBattleshipModel();
+            const target = pt.clone();
+            const cameraDir = new THREE.Vector3(camera.position.x - pt.x, 0, camera.position.z - pt.z);
+            if (cameraDir.lengthSq() < 0.001) cameraDir.set(0, 0, 1);
+            cameraDir.normalize();
+            const lateral = new THREE.Vector3(-cameraDir.z, 0, cameraDir.x).multiplyScalar((Math.random() - 0.5) * 56);
+            const flightY = 90 + Math.random() * 14;
+            const start = pt.clone().add(cameraDir.clone().multiplyScalar(285)).add(lateral);
+            start.y = flightY;
+            const hover = pt.clone().add(cameraDir.clone().multiplyScalar(34)).add(lateral.multiplyScalar(0.35));
+            hover.y = flightY;
+            model.group.position.copy(start);
+            faceBattleshipHorizontally(model.group, target);
+            scene.add(model.group);
+
+            const groundLight = new THREE.PointLight(0xbdf8ff, 0, 260);
+            groundLight.position.set(target.x, 28, target.z);
+            scene.add(groundLight);
+            createWarpFlash(start, 0xffffff, 58);
+
+            ancientBattleships.push({
+                ...model,
+                target,
+                hover,
+                groundLight,
+                phase: 'arrival',
+                phaseTimer: 0,
+                age: 0,
+                beams: [],
+                plasmaBolts: [],
+                firedPlasma: 0,
+                sweepSeed: Math.random() * Math.PI * 2,
+                drift: new THREE.Vector3((Math.random() - 0.5) * 0.22, 0, (Math.random() - 0.5) * 0.22),
+            });
+            showMessage('Ancient Battleship warping in');
+        }
+
+        function removeAncientBattleship(bs) {
+            bs.beams.forEach(b => scene.remove(b));
+            bs.plasmaBolts.forEach(p => scene.remove(p.mesh));
+            if (bs.group) scene.remove(bs.group);
+            if (bs.groundLight) scene.remove(bs.groundLight);
+        }
+
+        function updateAncientBattleships() {
+            for (let bi = ancientBattleships.length - 1; bi >= 0; bi--) {
+                const bs = ancientBattleships[bi];
+                bs.age++;
+                bs.phaseTimer++;
+                bs.beams.forEach(b => scene.remove(b));
+                bs.beams = [];
+
+                bs.group.position.add(bs.drift);
+                faceBattleshipHorizontally(bs.group, bs.target);
+                bs.core.scale.setScalar(1 + Math.sin(bs.age * 0.18) * 0.12);
+                bs.coreRing.rotation.z += 0.08;
+                bs.shield.material.opacity = 0.1 + Math.sin(bs.age * 0.09) * 0.035;
+                bs.shield.rotation.y += 0.006;
+                bs.banks.forEach((bank, i) => {
+                    bank.material.opacity = 0.28 + Math.sin(bs.age * 0.18 + i) * 0.14;
+                });
+
+                for (let pi = bs.plasmaBolts.length - 1; pi >= 0; pi--) {
+                    const p = bs.plasmaBolts[pi];
+                    p.t += 0.035;
+                    p.mesh.position.lerpVectors(p.start, p.end, Math.min(1, p.t));
+                    p.mesh.scale.setScalar(1 + Math.sin(bs.age * 0.42) * 0.14);
+                    if (p.t >= 1) {
+                        explode(p.end, 36, 0xbdf8ff);
+                        applyBlast(p.end, 54, 15, 7, 900, true, true);
+                        survivalDamageAtPoint(p.end, 54, 36, 'battleship blast', 900);
+                        shatter(p.end, 18, 0x86dfff, 2.8);
+                        igniteRadius(p.end, 46, true);
+                        createBattleshipCrater(p.end, 16 + Math.random() * 10);
+                        scene.remove(p.mesh);
+                        bs.plasmaBolts.splice(pi, 1);
+                    }
+                }
+
+                if (bs.phase === 'arrival') {
+                    bs.group.position.lerp(bs.hover, 0.055);
+                    bs.groundLight.intensity = Math.min(5, bs.phaseTimer * 0.06);
+                    if (bs.phaseTimer > 95 || bs.group.position.distanceTo(bs.hover) < 4) {
+                        bs.phase = 'charge';
+                        bs.phaseTimer = 0;
+                        showMessage('Ancient Battleship laser banks charging');
+                    }
+                } else if (bs.phase === 'charge') {
+                    const charge = Math.min(1, bs.phaseTimer / 90);
+                    bs.coreLight.intensity = 6 + charge * 13;
+                    bs.groundLight.intensity = 4 + charge * 8;
+                    bs.banks.forEach(bank => { bank.scale.setScalar(1 + charge * 0.55 + Math.sin(bs.age * 0.45) * 0.08); });
+                    if (bs.phaseTimer > 100) {
+                        bs.phase = 'laser';
+                        bs.phaseTimer = 0;
+                        showMessage('Ancient Battleship cutting beam sweep');
+                    }
+                } else if (bs.phase === 'laser') {
+                    const sweep = Math.sin(bs.phaseTimer * 0.052 + bs.sweepSeed);
+                    const baseDir = new THREE.Vector3().subVectors(bs.target, bs.group.position);
+                    baseDir.y = 0;
+                    if (baseDir.lengthSq() < 0.001) baseDir.set(0, 0, -1);
+                    baseDir.normalize();
+                    const sideDir = new THREE.Vector3(-baseDir.z, 0, baseDir.x);
+                    for (const offset of [-13, 13]) {
+                        const start = bs.group.position.clone().add(sideDir.clone().multiplyScalar(offset)).add(new THREE.Vector3(0, -8, 0));
+                        const end = bs.target.clone()
+                            .add(sideDir.clone().multiplyScalar(offset * 1.5 + sweep * 82))
+                            .add(baseDir.clone().multiplyScalar(Math.cos(bs.phaseTimer * 0.04 + offset) * 38));
+                        end.y = 1.4;
+                        bs.beams.push(makeBeamBetween(start, end, 1.15, 0xf7feff, 0.96));
+                        const cutStart = end.clone().add(sideDir.clone().multiplyScalar(-18));
+                        const cutEnd = end.clone().add(sideDir.clone().multiplyScalar(18));
+                        if (bs.phaseTimer % 5 === 0) {
+                            damageCorridor(cutStart, cutEnd, 12, 120, 4, 1.4, true);
+                            survivalDamageAlongSegment(cutStart, cutEnd, 12, 57, 'battleship laser', 900);
+                            spawnColdTrench(cutStart, cutEnd, 7);
+                            igniteRadius(end, 12, true);
+                        }
+                    }
+                    bs.groundLight.intensity = 12 + Math.sin(bs.age * 0.45) * 4;
+                    if (bs.phaseTimer > 150) {
+                        bs.phase = 'plasma';
+                        bs.phaseTimer = 0;
+                        showMessage('Ancient Battleship plasma bombardment');
+                    }
+                } else if (bs.phase === 'plasma') {
+                    bs.groundLight.intensity = 9;
+                    if (bs.phaseTimer % 28 === 1 && bs.firedPlasma < 6) {
+                        const spread = new THREE.Vector3((Math.random() - 0.5) * 108, 0, (Math.random() - 0.5) * 108);
+                        const end = bs.target.clone().add(spread);
+                        end.y = 1.8;
+                        const mesh = new THREE.Mesh(
+                            new THREE.SphereGeometry(5.2, 18, 12),
+                            new THREE.MeshBasicMaterial({ color: 0xbdf8ff, transparent: true, opacity: 0.92, blending: THREE.AdditiveBlending })
+                        );
+                        const start = bs.group.position.clone().add(new THREE.Vector3(0, -11, -12));
+                        mesh.position.copy(start);
+                        scene.add(mesh);
+                        bs.plasmaBolts.push({ mesh, start, end, t: 0 });
+                        bs.firedPlasma++;
+                    }
+                    if (bs.phaseTimer > 205 && bs.plasmaBolts.length === 0) {
+                        bs.phase = 'withdraw';
+                        bs.phaseTimer = 0;
+                        createWarpFlash(bs.group.position, 0xffffff, 70);
+                        showMessage('Ancient Battleship jumping out');
+                    }
+                } else if (bs.phase === 'withdraw') {
+                    bs.group.scale.setScalar(Math.max(0.02, 1 - bs.phaseTimer / 34));
+                    bs.group.traverse(child => {
+                        if (child.material && child.material.transparent) child.material.opacity *= 0.9;
+                    });
+                    bs.groundLight.intensity *= 0.86;
+                    if (bs.phaseTimer > 34) {
+                        removeAncientBattleship(bs);
+                        ancientBattleships.splice(bi, 1);
+                    }
+                }
             }
         }
 
@@ -6280,6 +6584,7 @@ let scene, camera, renderer, controls, raycaster, mouse, ground, grid;
             if (gameMode === 'survival' && survivalActive) updateSurvival();
             updateOctopuses();
             updateMonarch();
+            updateAncientBattleships();
             updateMotherships();
             updateLeviathans();
             updateKrakens();
@@ -8493,7 +8798,7 @@ let scene, camera, renderer, controls, raycaster, mouse, ground, grid;
 
         function setupUI() {
             const buildIds = ['house', 'skyscraper', 'tree', 'human', 'builder', 'invader', 'animal', 'river', 'mountain', 'eraser'];
-            const destroyIds = ['fire', 'vortex', 'quake', 'tsunami', 'volcano', 'lavaflood', 'napalm', 'cluster', 'nuke', 'blackhole', 'meteor', 'cracker', 'monarch', 'mothership', 'leviathan', 'kraken', 'maw'];
+            const destroyIds = ['fire', 'vortex', 'quake', 'tsunami', 'volcano', 'lavaflood', 'napalm', 'cluster', 'nuke', 'blackhole', 'meteor', 'cracker', 'monarch', 'battleship', 'mothership', 'leviathan', 'kraken', 'maw'];
             const ids = [...buildIds, ...destroyIds];
 
             const selectTool = (id, el) => {
@@ -8654,6 +8959,8 @@ let scene, camera, renderer, controls, raycaster, mouse, ground, grid;
                 });
                 leviathans = [];
                 removeMonarch();
+                ancientBattleships.forEach(bs => removeAncientBattleship(bs));
+                ancientBattleships = [];
                 motherships.forEach(ms => removeMothership(ms));
                 motherships = [];
                 krakens.forEach(k => {
@@ -8776,6 +9083,8 @@ let scene, camera, renderer, controls, raycaster, mouse, ground, grid;
             despawnAllGroundMaws();
             octopuses = [];
             removeMonarch();
+            ancientBattleships.forEach(bs => removeAncientBattleship(bs));
+            ancientBattleships = [];
             motherships.forEach(ms => removeMothership(ms));
             motherships = [];
             despawnAllTornadoes();
@@ -10528,11 +10837,96 @@ let scene, camera, renderer, controls, raycaster, mouse, ground, grid;
         let nextDisasterTime = 0;
         let survivalActive = false;
         let lastDamageTime = 0;
+        let survivalDamageTimers = {};
+        let survivalHazards = [];
+        let survivalGrounded = true;
+        let survivalPunchPressed = false;
+        let survivalPunchTimer = 0;
+        let survivalMawGrab = null;
+        let survivalMawReleaseUntil = 0;
         const SURVIVAL_EYE_HEIGHT = 2.5;
         const SURVIVAL_MOVE_SPEED = 0.32; // villager walking pace
+        const SURVIVAL_LOOK_KEY_SPEED = 0.045;
 
         // Player avatar group (third-person)
         let survivalPlayer = null;
+
+        function survivalCooldownKey(label) {
+            return String(label || 'damage').replace(/\s+/g, '-').toLowerCase();
+        }
+
+        function applySurvivalDamage(amount, label = 'damage', cooldownMs = 0, key = null) {
+            if (!survivalActive || !survivalPlayer || survivalHp <= 0) return false;
+            const now = performance.now();
+            const damageKey = key || survivalCooldownKey(label);
+            if (cooldownMs > 0 && survivalDamageTimers[damageKey] && now - survivalDamageTimers[damageKey] < cooldownMs) return false;
+            survivalDamageTimers[damageKey] = now;
+            survivalHp -= amount;
+            showSurvivalToast(`-${amount} HP (${label})`);
+            return true;
+        }
+
+        function survivalPlayerGroundPos() {
+            if (!survivalPlayer) return null;
+            return new THREE.Vector3(survivalPlayer.position.x, 0, survivalPlayer.position.z);
+        }
+
+        function survivalDamageAtPoint(pt, radius, amount, label, cooldownMs = 0) {
+            if (!survivalActive || !survivalPlayer || !pt) return false;
+            const p = survivalPlayerGroundPos();
+            const center = new THREE.Vector3(pt.x, 0, pt.z);
+            if (p.distanceTo(center) > radius) return false;
+            return applySurvivalDamage(amount, label, cooldownMs, `${label}:${Math.round(center.x)}:${Math.round(center.z)}`);
+        }
+
+        function distancePointToSegment2D(point, start, end) {
+            const px = point.x, pz = point.z;
+            const ax = start.x, az = start.z;
+            const bx = end.x, bz = end.z;
+            const vx = bx - ax, vz = bz - az;
+            const wx = px - ax, wz = pz - az;
+            const lenSq = vx * vx + vz * vz;
+            const t = lenSq > 0 ? Math.max(0, Math.min(1, (wx * vx + wz * vz) / lenSq)) : 0;
+            const cx = ax + vx * t, cz = az + vz * t;
+            return Math.sqrt((px - cx) ** 2 + (pz - cz) ** 2);
+        }
+
+        function survivalDamageAlongSegment(start, end, width, amount, label, cooldownMs = 0) {
+            if (!survivalActive || !survivalPlayer) return false;
+            const p = survivalPlayerGroundPos();
+            if (distancePointToSegment2D(p, start, end) > width) return false;
+            return applySurvivalDamage(amount, label, cooldownMs, label);
+        }
+
+        function addSurvivalHazard(type, pt, radius, durationMs) {
+            if (!survivalActive || !pt) return;
+            survivalHazards.push({
+                type,
+                point: pt.clone(),
+                radius,
+                expiresAt: performance.now() + durationMs,
+                nextTickAt: performance.now() + 1000
+            });
+        }
+
+        function releaseSurvivalMawGrab(message = 'Maw released you') {
+            survivalMawGrab = null;
+            survivalMawReleaseUntil = performance.now() + 2500;
+            showSurvivalToast(message);
+        }
+
+        function survivalPunch() {
+            if (!survivalActive || !survivalPlayer) return;
+            survivalPunchTimer = 12;
+            if (survivalMawGrab && groundMaws.includes(survivalMawGrab.maw)) {
+                survivalMawGrab.punches++;
+                if (survivalMawGrab.punches >= 10) {
+                    releaseSurvivalMawGrab('Maw let go');
+                } else {
+                    showSurvivalToast(`Maw punches: ${survivalMawGrab.punches}/10`);
+                }
+            }
+        }
 
         function buildSurvivalPlayer() {
             const group = new THREE.Group();
@@ -10633,6 +11027,13 @@ let scene, camera, renderer, controls, raycaster, mouse, ground, grid;
             survivalChopTarget = null;
             survivalVelY = 0;
             survivalCaughtInTornado = false;
+            survivalDamageTimers = {};
+            survivalHazards = [];
+            survivalGrounded = true;
+            survivalPunchPressed = false;
+            survivalPunchTimer = 0;
+            survivalMawGrab = null;
+            survivalMawReleaseUntil = 0;
             survivalStartTime = performance.now();
             nextDisasterTime = performance.now() + 4000;
 
@@ -10690,6 +11091,9 @@ let scene, camera, renderer, controls, raycaster, mouse, ground, grid;
             window.removeEventListener('pointerup', survivalPointerUp);
             survivalKeys = {};
             survivalDragging = false;
+            survivalHazards = [];
+            survivalMawGrab = null;
+            survivalPunchPressed = false;
 
             // Hide UI elements
             document.getElementById('survival-crosshair').classList.remove('visible');
@@ -10799,8 +11203,22 @@ let scene, camera, renderer, controls, raycaster, mouse, ground, grid;
             else if (k === 'arrowdown')  mapped = 'ArrowDown';
             else if (k === 'arrowleft')  mapped = 'ArrowLeft';
             else if (k === 'arrowright') mapped = 'ArrowRight';
+            else if (k === 'w') mapped = 'KeyW';
+            else if (k === 'a') mapped = 'KeyA';
+            else if (k === 's') mapped = 'KeyS';
+            else if (k === 'd') mapped = 'KeyD';
+            else if (k === ' ') mapped = 'Space';
             if (mapped) {
                 survivalKeys[mapped] = true;
+                e.preventDefault();
+                return;
+            }
+            if (k === '1') {
+                survivalKeys['Digit1'] = true;
+                if (!survivalPunchPressed) {
+                    survivalPunchPressed = true;
+                    survivalPunch();
+                }
                 e.preventDefault();
                 return;
             }
@@ -10816,8 +11234,18 @@ let scene, camera, renderer, controls, raycaster, mouse, ground, grid;
             else if (k === 'arrowdown')  mapped = 'ArrowDown';
             else if (k === 'arrowleft')  mapped = 'ArrowLeft';
             else if (k === 'arrowright') mapped = 'ArrowRight';
+            else if (k === 'w') mapped = 'KeyW';
+            else if (k === 'a') mapped = 'KeyA';
+            else if (k === 's') mapped = 'KeyS';
+            else if (k === 'd') mapped = 'KeyD';
+            else if (k === ' ') mapped = 'Space';
             if (mapped) {
                 survivalKeys[mapped] = false;
+                return;
+            }
+            if (k === '1') {
+                survivalKeys['Digit1'] = false;
+                survivalPunchPressed = false;
                 return;
             }
             if (k === 'e') {
@@ -10832,6 +11260,19 @@ let scene, camera, renderer, controls, raycaster, mouse, ground, grid;
             if (!survivalActive || !survivalPlayer) return;
             const now = performance.now();
 
+            if (survivalKeys['KeyA']) survivalYaw += SURVIVAL_LOOK_KEY_SPEED;
+            if (survivalKeys['KeyD']) survivalYaw -= SURVIVAL_LOOK_KEY_SPEED;
+            if (survivalKeys['KeyW']) survivalPitch += SURVIVAL_LOOK_KEY_SPEED;
+            if (survivalKeys['KeyS']) survivalPitch -= SURVIVAL_LOOK_KEY_SPEED;
+            const maxPitch = Math.PI / 2 - 0.15;
+            if (survivalPitch > maxPitch) survivalPitch = maxPitch;
+            if (survivalPitch < -maxPitch) survivalPitch = -maxPitch;
+
+            if (survivalKeys['Space'] && survivalGrounded && !survivalMawGrab) {
+                survivalVelY = 0.78;
+                survivalGrounded = false;
+            }
+
             // Forward = direction from yaw (XZ only). Right = perpendicular.
             const forward = new THREE.Vector3(Math.sin(survivalYaw), 0, Math.cos(survivalYaw));
             const right = new THREE.Vector3().crossVectors(forward, new THREE.Vector3(0, 1, 0)).normalize();
@@ -10839,7 +11280,7 @@ let scene, camera, renderer, controls, raycaster, mouse, ground, grid;
             // Aggregate movement input into a vector (so diagonals don't double-speed)
             const moveDir = new THREE.Vector3();
             let isMoving = false;
-            if (!survivalCaughtInTornado) {
+            if (!survivalCaughtInTornado && !survivalMawGrab) {
                 if (survivalKeys['ArrowUp'])    { moveDir.add(forward); isMoving = true; }
                 if (survivalKeys['ArrowDown'])  { moveDir.sub(forward); isMoving = true; }
                 if (survivalKeys['ArrowLeft'])  { moveDir.sub(right);   isMoving = true; }
@@ -10927,6 +11368,9 @@ let scene, camera, renderer, controls, raycaster, mouse, ground, grid;
                 }
                 survivalPlayer.position.y = 0;
                 survivalVelY = 0;
+                survivalGrounded = true;
+            } else {
+                survivalGrounded = false;
             }
 
             // Clamp to world boundary
@@ -10950,75 +11394,31 @@ let scene, camera, renderer, controls, raycaster, mouse, ground, grid;
 
             // === DAMAGE FROM ENVIRONMENT ===
             const playerPos = new THREE.Vector3(survivalPlayer.position.x, 0, survivalPlayer.position.z);
-            let inDanger = false;
-            // Fires
-            worldObjects.forEach(o => {
-                if (o.userData.onFire && !o.userData.isCorpse) {
-                    if (o.position.distanceTo(playerPos) < 6) inDanger = true;
-                }
-            });
-            // Lava pools
+            // Volcano lava pools and lava bombs
+            let inVolcanoDanger = false;
             volcanoes.forEach(v => {
                 const d = playerPos.distanceTo(new THREE.Vector3(v.point.x, 0, v.point.z));
-                if (d < v.poolRadius && d > v.radius * 0.6) inDanger = true;
-            });
-            // Tsunamis
-            tsunamis.forEach(w => {
-                const dx = playerPos.x - w.position;
-                if (Math.abs(dx) < 20) inDanger = true;
-            });
-            // Singularity
-            if (singularityPoint) {
-                if (playerPos.distanceTo(singularityPoint) < 50) inDanger = true;
-            }
-            // Active explosion debris (recently spawned, fast-moving rubble = dangerous)
-            debris.forEach(d => {
-                if (d.userData && !d.userData.settled && d.position.distanceTo(playerPos) < 3) {
-                    inDanger = true;
-                }
+                if (d < v.poolRadius && d > v.radius * 0.6) inVolcanoDanger = true;
             });
 
-            if (inDanger && now - lastDamageTime > 200) {
+            if (inVolcanoDanger && now - lastDamageTime > 350) {
                 survivalHp -= 8;
                 lastDamageTime = now;
-                showSurvivalToast('-8 HP');
+                showSurvivalToast('-8 HP (lava)');
             }
 
-            // === INVADER ATTACKS PLAYER ===
-            // Crossbow bolts that hit the player. Cap at one bolt-hit per frame to prevent insta-kill.
-            for (let i = crossbowBolts.length - 1; i >= 0; i--) {
-                const b = crossbowBolts[i];
-                if (b.position.distanceTo(survivalPlayer.position) < 2.0 && b.position.y < 4) {
-                    survivalHp -= 35;
-                    if (b.userData.flaming) survivalHp -= 10;
-                    scene.remove(b);
-                    crossbowBolts.splice(i, 1);
-                    showSurvivalToast('-35 HP (bolt)');
-                    break; // only one bolt-hit per frame
-                }
-            }
-            // Direct contact with invader (mounted invader can run you over)
-            worldObjects.forEach(o => {
-                if (o.userData.type !== 'invader') return;
-                if (o.userData.hp <= 0 || o.userData.isCorpse) return;
-                if (o.position.distanceTo(playerPos) < 2.5) {
-                    if (now - lastDamageTime > 250) {
-                        survivalHp -= o.userData.mounted ? 15 : 8;
-                        lastDamageTime = now;
-                    }
-                }
-            });
-
-            // === LAVA BOMBS hitting near player ===
             for (const b of lavaBombs) {
                 if (b.position.distanceTo(survivalPlayer.position) < 4 && b.position.y < 5) {
                     if (now - lastDamageTime > 200) {
                         survivalHp -= 25;
                         lastDamageTime = now;
+                        showSurvivalToast('-25 HP (lava bomb)');
                     }
                     break; // only one bomb damage per frame
                 }
             }
+
+            updateSurvivalDisasterDamage(now);
 
             // Always update HUD first so the player sees their HP drop to 0 before the death screen
             updateSurvivalHud();
@@ -11027,6 +11427,79 @@ let scene, camera, renderer, controls, raycaster, mouse, ground, grid;
                 survivalDeath();
                 return;
             }
+        }
+
+        function updateSurvivalDisasterDamage(now) {
+            if (!survivalActive || !survivalPlayer) return;
+            const playerPos = survivalPlayerGroundPos();
+
+            if (survivalPunchTimer > 0) survivalPunchTimer--;
+
+            for (let i = survivalHazards.length - 1; i >= 0; i--) {
+                const h = survivalHazards[i];
+                if (now > h.expiresAt) {
+                    survivalHazards.splice(i, 1);
+                    continue;
+                }
+                if (h.type === 'napalmFire' && now >= h.nextTickAt && playerPos.distanceTo(h.point) <= h.radius) {
+                    applySurvivalDamage(2, 'napalm fire', 0, `napalm-fire:${i}:${Math.floor(now / 1000)}`);
+                    h.nextTickAt += 1000;
+                }
+            }
+
+            let heldByValidMaw = false;
+            if (survivalMawGrab && groundMaws.includes(survivalMawGrab.maw) && survivalMawGrab.maw.phase === 'attack') {
+                heldByValidMaw = true;
+            } else {
+                survivalMawGrab = null;
+            }
+
+            if (!heldByValidMaw && now > survivalMawReleaseUntil) {
+                for (const maw of groundMaws) {
+                    if (maw.phase !== 'attack') continue;
+                    const dist = playerPos.distanceTo(maw.pt);
+                    if (dist < Math.min(42, maw.radius)) {
+                        survivalMawGrab = { maw, punches: 0, swallowed: false };
+                        showSurvivalToast('Maw grabbed you: punch 10x');
+                        break;
+                    }
+                }
+            }
+
+            if (survivalMawGrab) {
+                const maw = survivalMawGrab.maw;
+                const toMouth = new THREE.Vector3(maw.pt.x - survivalPlayer.position.x, 0, maw.pt.z - survivalPlayer.position.z);
+                const d = toMouth.length();
+                if (d > 0.15) survivalPlayer.position.addScaledVector(toMouth.normalize(), 0.46);
+                survivalVelY = Math.min(survivalVelY, 0.05);
+                if (d < 7 && !survivalMawGrab.swallowed) {
+                    survivalMawGrab.swallowed = true;
+                    applySurvivalDamage(100, 'maw swallow', 0, 'maw-swallow');
+                    survivalMawGrab = null;
+                    survivalMawReleaseUntil = now + 3500;
+                }
+            }
+
+            krakens.forEach((k, idx) => {
+                const dPortal = playerPos.distanceTo(new THREE.Vector3(k.portalPos.x, 0, k.portalPos.z));
+                const dTarget = playerPos.distanceTo(k.pt);
+                if ((k.phase === 'emerge' || k.phase === 'attack') && dTarget < 82) {
+                    applySurvivalDamage(20, 'kraken tentacle', 1200, `kraken-tentacle:${idx}`);
+                }
+                if ((k.phase === 'groundGrab' && dTarget < 45) || dPortal < 18) {
+                    applySurvivalDamage(100, 'kraken swallow', 3500, `kraken-swallow:${idx}`);
+                }
+            });
+
+            leviathans.forEach((lev, idx) => {
+                const head = new THREE.Vector3(lev.headPos.x, 0, lev.headPos.z);
+                const d = playerPos.distanceTo(head);
+                if (d < 65) {
+                    const closeness = 1 - Math.min(1, d / 65);
+                    const dmg = Math.round(10 + closeness * 40);
+                    applySurvivalDamage(dmg, 'leviathan proximity', 850, `leviathan:${idx}`);
+                }
+            });
         }
 
         function updateSurvivalHud() {
@@ -11208,7 +11681,7 @@ let scene, camera, renderer, controls, raycaster, mouse, ground, grid;
         function showSurvivalToast(text) {
             const msg = document.getElementById('survival-message');
             msg.innerText = text;
-            msg.style.background = 'rgba(34, 197, 94, 0.9)';
+            msg.style.background = String(text).startsWith('-') ? 'rgba(220, 38, 38, 0.92)' : 'rgba(34, 197, 94, 0.9)';
             msg.style.fontSize = '1.4rem';
             msg.style.padding = '16px 30px';
             msg.classList.add('visible');
@@ -11241,40 +11714,34 @@ let scene, camera, renderer, controls, raycaster, mouse, ground, grid;
             }
 
             const choices = [
-                'meteor', 'tornado', 'volcano', 'tsunami', 'fire',
-                'cluster', 'napalm', 'invader', 'invader', 'invader' // invaders weighted higher
+                'tornado', 'volcano', 'maw', 'kraken', 'leviathan',
+                'battleship', 'mothership', 'napalm', 'cluster'
             ];
             const choice = choices[Math.floor(Math.random() * choices.length)];
 
-            if (choice === 'meteor') {
-                launchMeteor(targetPt);
-            } else if (choice === 'tornado') {
+            if (choice === 'tornado') {
                 spawnTornado(targetPt);
             } else if (choice === 'volcano') {
                 spawnVolcano(targetPt);
-            } else if (choice === 'tsunami') {
-                spawnTsunami(targetPt);
-            } else if (choice === 'fire') {
-                igniteRadius(targetPt, 16);
-                explode(targetPt, 12, 0xff7700);
+            } else if (choice === 'maw') {
+                spawnGroundMaw(targetPt);
+            } else if (choice === 'kraken') {
+                spawnKraken(targetPt);
+            } else if (choice === 'leviathan') {
+                spawnLeviathan(targetPt);
+            } else if (choice === 'battleship') {
+                spawnAncientBattleship(targetPt);
+            } else if (choice === 'mothership') {
+                spawnMothership(targetPt);
             } else if (choice === 'cluster') {
                 executeWeapon('cluster', targetPt);
             } else if (choice === 'napalm') {
                 executeWeapon('napalm', targetPt);
-            } else if (choice === 'invader') {
-                // Spawn 2-4 invaders at the world edge, charging the player
-                const count = 2 + Math.floor(Math.random() * 3);
-                const edgeAng = ang;
-                for (let i = 0; i < count; i++) {
-                    const a = edgeAng + (Math.random() - 0.5) * 0.8;
-                    const r = WORLD_SIZE * 0.85;
-                    placeObject('invader', new THREE.Vector3(Math.cos(a) * r, 0, Math.sin(a) * r));
-                }
             }
 
             // Show a warning
             const msg = document.getElementById('survival-message');
-            msg.innerText = '⚠️ ' + choice.toUpperCase();
+            msg.innerText = '⚠️ ' + (choice === 'mothership' ? 'UFO' : choice.toUpperCase());
             msg.classList.add('visible');
             setTimeout(() => msg.classList.remove('visible'), 1500);
         }

@@ -25,6 +25,7 @@ const destroyTools = [
   ["btn-blackhole", "🕳️", "Black Hole"],
   ["btn-cracker", "🪨", "Cracker"],
   ["btn-monarch", "🐉", "Monarch"],
+  ["btn-battleship", "🛸", "Battleship"],
   ["btn-mothership", "🛸", "Mothership"],
   ["btn-leviathan", "🐉", "Leviathan"],
   ["btn-kraken", "🦑", "Kraken"],

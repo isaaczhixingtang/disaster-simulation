@@ -1,8 +1,72 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
-  <rect width="64" height="64" rx="12" fill="#020617"/>
-  <circle cx="32" cy="32" r="22" fill="#2563eb"/>
-  <path d="M12 38c9-5 17-4 25 2 5 4 10 5 15 2 1 8-7 14-20 14-11 0-19-7-20-18z" fill="#16a34a"/>
-  <path d="M36 9c8 3 15 11 17 20-6-2-12-2-17 1-3-7-3-14 0-21z" fill="#60a5fa"/>
-  <path d="M18 28h10v19H18zM31 21h14v26H31z" fill="#f8fafc"/>
-  <path d="M12 13l9 5-9 5 4-5z" fill="#f97316"/>
+  <defs>
+    <linearGradient id="sky" x1="10" x2="54" y1="7" y2="57" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#111827"/>
+      <stop offset=".55" stop-color="#334155"/>
+      <stop offset="1" stop-color="#0f172a"/>
+    </linearGradient>
+    <linearGradient id="lava" x1="44" x2="55" y1="20" y2="47" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#fef08a"/>
+      <stop offset=".38" stop-color="#f97316"/>
+      <stop offset="1" stop-color="#991b1b"/>
+    </linearGradient>
+    <linearGradient id="blast" x1="22" x2="43" y1="20" y2="44" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#fff7ad"/>
+      <stop offset=".42" stop-color="#fb923c"/>
+      <stop offset="1" stop-color="#b91c1c"/>
+    </linearGradient>
+    <filter id="shadow" x="-20%" y="-20%" width="140%" height="140%">
+      <feDropShadow dx="0" dy="2" stdDeviation="1.2" flood-color="#020617" flood-opacity=".5"/>
+    </filter>
+  </defs>
+
+  <rect width="64" height="64" rx="13" fill="url(#sky)"/>
+  <path d="M0 47 11 36l13 6 8-9 10 9 8-5 14 10v17H0z" fill="#020617" opacity=".58"/>
+
+  <g filter="url(#shadow)">
+    <path d="M41 43 50 16l9 27z" fill="#292524"/>
+    <path d="M46 25 50 16l4 11-4-2z" fill="#f8fafc" opacity=".72"/>
+    <path d="M49 25c2 4 0 8 3 12 1 2 2 4 1 7l-4 1c1-4-3-6-1-11 1-3 0-6 1-9z" fill="url(#lava)"/>
+    <path d="M43 44h18l-7 8H37z" fill="#3f3f46"/>
+
+    <path d="M8 45 28 34l22 10-21 12z" fill="#334155"/>
+    <path d="M8 45v7l21 9v-5z" fill="#1e293b"/>
+    <path d="M50 44v7L29 61v-5z" fill="#0f172a"/>
+
+    <path d="M14 30h8v18l-8 4z" fill="#64748b"/>
+    <path d="M22 30l5 3v16l-5-1z" fill="#334155"/>
+    <path d="M14 30l8-4 5 3-5 1z" fill="#94a3b8"/>
+
+    <path d="M29 22h10v27l-10 5z" fill="#475569"/>
+    <path d="M39 22l6 4v23l-6 0z" fill="#1e293b"/>
+    <path d="M29 22l10-5 6 4-6 1z" fill="#94a3b8"/>
+
+    <path d="M8 36h7v15l-7 3z" fill="#475569"/>
+    <path d="M15 36l5 3v14l-5-2z" fill="#1e293b"/>
+    <path d="M8 36l7-4 5 3-5 1z" fill="#94a3b8"/>
+
+    <path d="M45 35h7v12l-7 3z" fill="#64748b"/>
+    <path d="M52 35l4 3v10l-4-1z" fill="#334155"/>
+    <path d="M45 35l7-3 4 3-4 0z" fill="#cbd5e1"/>
+  </g>
+
+  <g opacity=".82">
+    <path d="M17 34h2v3h-2zM17 40h2v3h-2zM31 27h2v4h-2zM36 26h2v4h-2zM31 35h2v4h-2zM36 35h2v4h-2zM47 38h2v3h-2z" fill="#fde68a"/>
+    <path d="M20 44h2v3h-2zM41 40h2v4h-2zM11 40h2v3h-2z" fill="#f97316"/>
+  </g>
+
+  <g filter="url(#shadow)">
+    <path d="m32 18 4 9 9-4-5 8 9 3-10 2 4 9-8-6-6 8-1-10-10 3 7-7-7-6 10 1z" fill="url(#blast)"/>
+    <path d="m32 25 3 6 6-2-4 5 4 4-6 0-3 6-2-6-6 1 4-5-4-4 6 1z" fill="#fef3c7"/>
+    <path d="M22 19c-4-6 2-11 8-8 1-6 10-6 12 0 5-1 9 2 9 7 3 1 5 4 4 7-5-3-10-2-14 0-6-7-13-7-19-6z" fill="#64748b" opacity=".88"/>
+    <path d="M25 15c4-2 9-2 13 1M40 17c4-1 7 0 10 3" fill="none" stroke="#cbd5e1" stroke-linecap="round" stroke-width="2" opacity=".55"/>
+  </g>
+
+  <g fill="none" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M9 53h8l4 3 6-4 6 4 7-5 8 3" stroke="#f97316" stroke-width="2"/>
+    <path d="M11 55h9M36 56h7M48 51h5" stroke="#fde68a" stroke-width="1.5"/>
+    <path d="M23 50 20 47M41 49l4-4M15 34l-3-3M51 31l4-2" stroke="#fb7185" stroke-width="1.8"/>
+  </g>
+
+  <path d="M2 42c8 6 14 8 23 9 14 2 24-1 37-9v22H2z" fill="#020617" opacity=".18"/>
 </svg>

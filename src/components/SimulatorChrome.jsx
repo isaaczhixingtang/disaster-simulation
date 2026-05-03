@@ -24,8 +24,11 @@ const destroyTools = [
   ["btn-meteor", "☄️", "Meteor"],
   ["btn-blackhole", "🕳️", "Black Hole"],
   ["btn-cracker", "🪨", "Cracker"],
+  ["btn-monarch", "🐉", "Monarch"],
+  ["btn-mothership", "🛸", "Mothership"],
   ["btn-leviathan", "🐉", "Leviathan"],
   ["btn-kraken", "🦑", "Kraken"],
+  ["btn-maw", "🦷", "Maw"],
 ];
 
 function ToolButton({ id, className, icon, label }) {
@@ -37,30 +40,30 @@ function ToolButton({ id, className, icon, label }) {
   );
 }
 
+function HeaderButton({ id, icon, label, className = "" }) {
+  return (
+    <button id={id} className={`header-btn ${className}`} aria-label={label}>
+      <span className="icon">{icon}</span>
+      <span className="btn-label">{label}</span>
+    </button>
+  );
+}
+
 export function SimulatorChrome() {
   return (
     <>
       <div id="header" style={{ display: "none" }}>
-        <div id="title">🌍 Disaster Sim</div>
+        <div id="title">
+          <span className="icon">🌍</span>
+          <span>Disaster Sim</span>
+        </div>
         <div id="header-actions">
-          <button id="btn-generate" className="header-btn" aria-label="Generate Terrain">
-            🌱 Generate
-          </button>
-          <button id="btn-village" className="header-btn" aria-label="Random Village">
-            🏘️ Village
-          </button>
-          <button id="btn-daynight" className="header-btn" aria-label="Toggle Day/Night">
-            ☀️
-          </button>
-          <button id="btn-toggle" className="header-btn" aria-label="Toggle UI">
-            ⚙️
-          </button>
-          <button id="btn-clear" className="header-btn purge" aria-label="Reset">
-            ♻️ Reset
-          </button>
-          <button id="btn-exit-sim" className="header-btn" aria-label="Exit to Menu">
-            🚪 Exit
-          </button>
+          <HeaderButton id="btn-generate" icon="🌱" label="Generate" />
+          <HeaderButton id="btn-village" icon="🏘️" label="Village" />
+          <HeaderButton id="btn-daynight" icon="☀️" label="Day/Night" />
+          <HeaderButton id="btn-toggle" icon="⚙️" label="Toggle UI" />
+          <HeaderButton id="btn-clear" icon="♻️" label="Reset" className="purge" />
+          <HeaderButton id="btn-exit-sim" icon="🚪" label="Exit" />
         </div>
       </div>
 

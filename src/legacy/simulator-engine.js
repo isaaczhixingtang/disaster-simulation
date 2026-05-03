@@ -22,6 +22,7 @@ let scene, camera, renderer, controls, raycaster, mouse, ground, grid;
         let lavaStreams = []; // active lava streams from clicks (drops + growing pool)
         let cooledLavaPools = []; // orphaned cooled pools after stream expires
         let cyclopses = []; // array of { mesh, target, age, lifeMax, ... }
+        let groundMaws = []; // array of ground mouths with four dragging tentacles
 
         // Day/night cycle: phase 0..1 where 0=midnight, 0.25=sunrise, 0.5=noon, 0.75=sunset
         let dayPhase = 0.35; // start in morning
@@ -121,7 +122,7 @@ let scene, camera, renderer, controls, raycaster, mouse, ground, grid;
         }
 
         // Build/destroy tools
-        const DESTROY_TOOLS = new Set(['fire','vortex','quake','tsunami','volcano','lavaflood','napalm','cluster','nuke','blackhole','meteor','cracker','leviathan','kraken']);
+        const DESTROY_TOOLS = new Set(['fire','vortex','quake','tsunami','volcano','lavaflood','napalm','cluster','nuke','blackhole','meteor','cracker','monarch','mothership','leviathan','kraken','maw']);
 
         function addMultiTarget(pt) {
             multiTargets.push(pt.clone());
@@ -1915,10 +1916,16 @@ let scene, camera, renderer, controls, raycaster, mouse, ground, grid;
                 spawnLavaStream(pt);
             } else if (type === 'cracker') {
                 spawnPlanetCracker(pt);
+            } else if (type === 'monarch') {
+                spawnMonarch(pt);
+            } else if (type === 'mothership') {
+                spawnMothership(pt);
             } else if (type === 'leviathan') {
                 spawnLeviathan(pt);
             } else if (type === 'kraken') {
                 spawnKraken(pt);
+            } else if (type === 'maw') {
+                spawnGroundMaw(pt);
             } else if (type === 'vortex') {
                 spawnTornado(pt);
             } else if (type === 'quake') {
@@ -2638,9 +2645,478 @@ let scene, camera, renderer, controls, raycaster, mouse, ground, grid;
 
         let octopuses = []; // devourer removed
         function updateOctopuses() {}
-        // Monarch removed — keep stubs so reset code doesn't crash
+
+        function makeBeamBetween(start, end, radius, color, opacity = 0.9) {
+            const diff = new THREE.Vector3().subVectors(end, start);
+            const len = Math.max(0.1, diff.length());
+            const mesh = new THREE.Mesh(
+                new THREE.CylinderGeometry(radius, radius, len, 16),
+                new THREE.MeshBasicMaterial({ color, transparent: true, opacity, blending: THREE.AdditiveBlending })
+            );
+            mesh.position.copy(start).add(end).multiplyScalar(0.5);
+            mesh.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), diff.normalize());
+            scene.add(mesh);
+            return mesh;
+        }
+
+        function damageCorridor(start, end, width, damage, force, lift, heat = false) {
+            const a = new THREE.Vector2(start.x, start.z);
+            const b = new THREE.Vector2(end.x, end.z);
+            const ab = new THREE.Vector2().subVectors(b, a);
+            const lenSq = Math.max(0.001, ab.lengthSq());
+            worldObjects.forEach(obj => {
+                if (obj.userData.frozen || obj.userData.hp <= 0) return;
+                const p = new THREE.Vector2(obj.position.x, obj.position.z);
+                const t = Math.max(0, Math.min(1, new THREE.Vector2().subVectors(p, a).dot(ab) / lenSq));
+                const closest = a.clone().add(ab.clone().multiplyScalar(t));
+                const dist = p.distanceTo(closest);
+                if (dist > width) return;
+                const power = 1 - dist / width;
+                if (obj.userData.isStatic) {
+                    obj.userData.hp -= damage * power * (obj.userData.type === 'road' ? 0.25 : 1);
+                } else {
+                    const kick = new THREE.Vector3(obj.position.x - closest.x, 0, obj.position.z - closest.y);
+                    if (kick.lengthSq() < 0.01) kick.set(Math.random() - 0.5, 0, Math.random() - 0.5);
+                    obj.userData.velocity.add(kick.normalize().multiplyScalar(force * power));
+                    obj.userData.velocity.y += lift * power;
+                    obj.userData.hp -= damage * power;
+                }
+                if (heat && Math.random() < power * 0.75) obj.userData.onFire = true;
+            });
+            debris.forEach(d => {
+                const p = new THREE.Vector2(d.position.x, d.position.z);
+                const t = Math.max(0, Math.min(1, new THREE.Vector2().subVectors(p, a).dot(ab) / lenSq));
+                const closest = a.clone().add(ab.clone().multiplyScalar(t));
+                const dist = p.distanceTo(closest);
+                if (dist > width) return;
+                const power = 1 - dist / width;
+                d.userData.velocity.add(new THREE.Vector3(d.position.x - closest.x, 0, d.position.z - closest.y).normalize().multiplyScalar(force * power * 0.55));
+                d.userData.velocity.y += lift * power * 0.4;
+                d.userData.settled = false;
+                d.userData.hp -= damage * power * 0.25;
+                if (heat && Math.random() < power * 0.6) d.userData.onFire = true;
+            });
+        }
+
+        function spawnColdTrench(start, end, width) {
+            const mid = start.clone().add(end).multiplyScalar(0.5);
+            const len = start.distanceTo(end);
+            const trench = new THREE.Mesh(
+                new THREE.BoxGeometry(width, 0.18, len),
+                new THREE.MeshBasicMaterial({ color: 0x6ee7ff, transparent: true, opacity: 0.56, blending: THREE.AdditiveBlending })
+            );
+            trench.position.set(mid.x, 0.12, mid.z);
+            trench.rotation.y = Math.atan2(end.x - start.x, end.z - start.z);
+            scene.add(trench);
+            let life = 1;
+            const fade = setInterval(() => {
+                life -= 0.045;
+                trench.material.opacity = Math.max(0, life * 0.56);
+                if (life <= 0) {
+                    scene.remove(trench);
+                    trench.geometry.dispose();
+                    trench.material.dispose();
+                    clearInterval(fade);
+                }
+            }, 60);
+        }
+
+        // ===== MONARCH: sky-serpent plasma strafe attacker =====
         let monarchInstance = null;
         let monarchKeys = {};
+
+        function spawnMonarch(pt) {
+            if (monarchInstance) { showMessage('The Monarch is already making an attack run!'); return; }
+
+            const group = new THREE.Group();
+            scene.add(group);
+
+            const bodyMat = new THREE.MeshStandardMaterial({ color: 0x07111b, roughness: 0.68, metalness: 0.18, emissive: 0x020810, emissiveIntensity: 0.4 });
+            const bellyMat = new THREE.MeshStandardMaterial({ color: 0x0f2735, roughness: 0.62, metalness: 0.1, emissive: 0x072338, emissiveIntensity: 0.7 });
+            const finMat = new THREE.MeshBasicMaterial({ color: 0xbdf6ff, transparent: true, opacity: 0.88, blending: THREE.AdditiveBlending });
+            const eyeMat = new THREE.MeshBasicMaterial({ color: 0xdffbff });
+
+            const segments = [];
+            const spines = [];
+            const SEGMENTS = 24;
+            for (let i = 0; i < SEGMENTS; i++) {
+                const t = i / (SEGMENTS - 1);
+                const radius = 9.5 * (1 - t * 0.72) + Math.sin(t * Math.PI) * 3.5;
+                const seg = new THREE.Mesh(new THREE.SphereGeometry(radius, 16, 10), i % 3 === 1 ? bellyMat : bodyMat);
+                seg.scale.set(1.08, 0.62 + Math.sin(t * Math.PI) * 0.18, 1.42);
+                seg.position.set(Math.sin(i * 0.62) * 6, Math.cos(i * 0.44) * 2.3, -i * 11);
+                seg.castShadow = true;
+                group.add(seg);
+                segments.push(seg);
+
+                if (i < SEGMENTS - 2) {
+                    const spine = new THREE.Mesh(new THREE.ConeGeometry(2.5 * (1 - t * 0.55), 16 * (1 - t * 0.45), 5), finMat.clone());
+                    spine.position.set(seg.position.x, seg.position.y + radius * 0.85, seg.position.z);
+                    spine.rotation.x = Math.PI * 0.12;
+                    group.add(spine);
+                    spines.push(spine);
+                }
+            }
+
+            const head = new THREE.Group();
+            const skull = new THREE.Mesh(new THREE.SphereGeometry(13, 18, 12), bodyMat);
+            skull.scale.set(1.35, 0.72, 1.7);
+            skull.position.z = 7;
+            head.add(skull);
+            const jaw = new THREE.Mesh(new THREE.BoxGeometry(19, 3.2, 15), bellyMat);
+            jaw.position.set(0, -5.5, 16);
+            head.add(jaw);
+            for (const x of [-5.2, 5.2]) {
+                const eye = new THREE.Mesh(new THREE.SphereGeometry(1.5, 8, 6), eyeMat);
+                eye.position.set(x, 2, 19);
+                head.add(eye);
+            }
+            group.add(head);
+
+            const shadow = new THREE.Mesh(
+                new THREE.CircleGeometry(55, 48),
+                new THREE.MeshBasicMaterial({ color: 0x000000, transparent: true, opacity: 0.38 })
+            );
+            shadow.rotation.x = -Math.PI / 2;
+            shadow.position.set(pt.x, 0.08, pt.z);
+            scene.add(shadow);
+
+            const light = new THREE.PointLight(0x9eeeff, 7, 420);
+            group.add(light);
+
+            const attackAngle = Math.random() * Math.PI * 2;
+            const dir = new THREE.Vector3(Math.sin(attackAngle), 0, Math.cos(attackAngle)).normalize();
+            group.position.set(pt.x - dir.x * 45, 650, pt.z - dir.z * 45);
+
+            monarchInstance = {
+                group, head, segments, spines, shadow, light, beam: null,
+                target: pt.clone(), dir, passCount: 0,
+                age: 0, phase: 'entry', phaseTimer: 0, yaw: attackAngle,
+            };
+            showMessage('The Monarch eclipses the city from above');
+        }
+
+        function removeMonarch() {
+            if (!monarchInstance) return;
+            const m = monarchInstance;
+            if (m.beam) scene.remove(m.beam);
+            if (m.shadow) scene.remove(m.shadow);
+            if (m.group) scene.remove(m.group);
+            monarchInstance = null;
+        }
+
+        function updateMonarch() {
+            if (!monarchInstance) return;
+            const m = monarchInstance;
+            m.age++;
+            m.phaseTimer++;
+
+            const pulse = 0.75 + Math.sin(m.age * 0.22) * 0.25;
+            m.spines.forEach((sp, i) => {
+                sp.material.opacity = 0.55 + pulse * 0.38;
+                sp.scale.y = 0.85 + pulse * 0.5 + Math.sin(m.age * 0.12 + i) * 0.1;
+                sp.rotation.x = Math.PI * 0.12 - (m.phase === 'strafe' ? 0.55 : 0);
+            });
+            m.light.intensity = 5 + pulse * 7;
+            m.segments.forEach((seg, i) => {
+                seg.position.x = Math.sin(i * 0.62 + m.age * 0.055) * (5 + i * 0.08);
+                seg.position.y = Math.cos(i * 0.4 + m.age * 0.045) * 2.3;
+            });
+
+            if (m.beam) { scene.remove(m.beam); m.beam = null; }
+
+            if (m.phase === 'entry') {
+                m.group.position.x += (m.target.x - m.group.position.x) * 0.03;
+                m.group.position.z += (m.target.z - m.group.position.z) * 0.03;
+                m.group.position.y -= 4.5;
+                m.yaw += 0.018;
+                m.group.rotation.set(-Math.PI / 2 + Math.sin(m.age * 0.04) * 0.08, m.yaw, 0);
+                const shadowScale = 1 + (650 - m.group.position.y) / 85;
+                m.shadow.position.set(m.group.position.x, 0.08, m.group.position.z);
+                m.shadow.scale.setScalar(Math.min(7.2, shadowScale));
+                m.shadow.material.opacity = Math.min(0.62, 0.18 + shadowScale * 0.08);
+                if (m.group.position.y <= 210) {
+                    m.phase = 'strafe';
+                    m.phaseTimer = 0;
+                    m.yaw = Math.atan2(m.dir.x, m.dir.z);
+                    m.group.position.set(m.target.x - m.dir.x * 280, 210, m.target.z - m.dir.z * 280);
+                    showMessage('Monarch strafe pass: fin-spines raking the skyline');
+                }
+            } else if (m.phase === 'strafe') {
+                m.group.position.addScaledVector(m.dir, 5.0);
+                m.group.position.y = 205 + Math.sin(m.phaseTimer * 0.06) * 18;
+                m.group.rotation.set(0.08 + Math.sin(m.phaseTimer * 0.04) * 0.08, m.yaw, Math.sin(m.phaseTimer * 0.06) * 0.2);
+                m.shadow.position.set(m.group.position.x, 0.08, m.group.position.z);
+                m.shadow.scale.setScalar(4.8);
+                if (m.phaseTimer % 7 === 0) {
+                    const groundPt = new THREE.Vector3(m.group.position.x, 0, m.group.position.z);
+                    applyBlast(groundPt, 62, 13, 3.2, 850, false, true);
+                    damageCorridor(
+                        groundPt.clone().addScaledVector(m.dir, -65),
+                        groundPt.clone().addScaledVector(m.dir, 82),
+                        36,
+                        520,
+                        8,
+                        4,
+                        false
+                    );
+                    explode(groundPt, 18 + Math.random() * 14, 0xbdf6ff);
+                    if (Math.random() < 0.8) shatter(groundPt, 8, 0x9fb6c7, 1.7);
+                }
+                if (m.phaseTimer > 92) {
+                    m.phase = 'plasma';
+                    m.phaseTimer = 0;
+                    showMessage('Monarch plasma breath sweep');
+                }
+            } else if (m.phase === 'plasma') {
+                m.group.position.addScaledVector(m.dir, 2.8);
+                m.group.position.y = 175 + Math.sin(m.phaseTimer * 0.08) * 20;
+                m.group.rotation.set(0.16, m.yaw + Math.sin(m.phaseTimer * 0.035) * 0.7, Math.sin(m.phaseTimer * 0.05) * 0.55);
+                const side = new THREE.Vector3(m.dir.z, 0, -m.dir.x);
+                const sweep = (m.phaseTimer / 70 - 0.5) * 190;
+                const groundStart = new THREE.Vector3(m.group.position.x + side.x * sweep, 0.3, m.group.position.z + side.z * sweep);
+                const groundEnd = groundStart.clone().addScaledVector(m.dir, 210);
+                const beamStart = m.group.position.clone().add(new THREE.Vector3(0, -18, 24));
+                const beamEnd = groundEnd.clone();
+                beamEnd.y = 8;
+                m.beam = makeBeamBetween(beamStart, beamEnd, 5.5, 0xbdf6ff, 0.72);
+                if (m.phaseTimer % 5 === 0) {
+                    damageCorridor(groundStart, groundEnd, 42, 1050, 10, 3.5, true);
+                    igniteRadius(groundEnd, 55, true);
+                    spawnColdTrench(groundStart, groundEnd, 10);
+                }
+                if (m.phaseTimer > 70) {
+                    m.phase = 'recovery';
+                    m.phaseTimer = 0;
+                    m.passCount++;
+                    showMessage('The Monarch spirals upward to recharge');
+                }
+            } else if (m.phase === 'recovery') {
+                m.group.position.y += 4.8;
+                m.yaw += 0.055;
+                m.group.rotation.set(-0.34, m.yaw, Math.sin(m.phaseTimer * 0.1) * 0.7);
+                m.shadow.material.opacity *= 0.985;
+                if (m.phaseTimer > 95) {
+                    if (m.passCount >= 2) {
+                        removeMonarch();
+                    } else {
+                        m.dir.applyAxisAngle(new THREE.Vector3(0, 1, 0), Math.PI * 0.82 + Math.random() * 0.45);
+                        m.yaw = Math.atan2(m.dir.x, m.dir.z);
+                        m.group.position.set(m.target.x - m.dir.x * 300, 300, m.target.z - m.dir.z * 300);
+                        m.phase = 'strafe';
+                        m.phaseTimer = 0;
+                    }
+                }
+            }
+        }
+
+        // ===== MOTHERSHIP: overhead grid-erasure UFO =====
+        let motherships = [];
+
+        function spawnMothership(pt) {
+            if (motherships.length > 0) { showMessage('A Mothership is already above the grid!'); return; }
+
+            const group = new THREE.Group();
+            scene.add(group);
+            const hullMat = new THREE.MeshStandardMaterial({ color: 0x121923, roughness: 0.5, metalness: 0.85, emissive: 0x03141a, emissiveIntensity: 0.5 });
+            const darkMat = new THREE.MeshStandardMaterial({ color: 0x05070a, roughness: 0.7, metalness: 0.6 });
+            const tealMat = new THREE.MeshBasicMaterial({ color: 0x5ff5ff, transparent: true, opacity: 0.88, blending: THREE.AdditiveBlending });
+
+            const hull = new THREE.Mesh(new THREE.CylinderGeometry(82, 112, 18, 64), hullMat);
+            hull.castShadow = true;
+            group.add(hull);
+            const crown = new THREE.Mesh(new THREE.CylinderGeometry(34, 58, 30, 48), darkMat);
+            crown.position.y = 18;
+            group.add(crown);
+            const core = new THREE.Mesh(new THREE.CylinderGeometry(18, 18, 20, 48), tealMat.clone());
+            core.position.y = -15;
+            group.add(core);
+            const coreRing = new THREE.Mesh(new THREE.TorusGeometry(25, 2.4, 8, 48), tealMat.clone());
+            coreRing.rotation.x = Math.PI / 2;
+            coreRing.position.y = -26;
+            group.add(coreRing);
+
+            const blades = [];
+            for (let i = 0; i < 12; i++) {
+                const a = (i / 12) * Math.PI * 2;
+                const blade = new THREE.Mesh(new THREE.BoxGeometry(92, 8, 15), hullMat);
+                blade.position.set(Math.sin(a) * 126, 1, Math.cos(a) * 126);
+                blade.rotation.y = a;
+                group.add(blade);
+                blades.push(blade);
+            }
+
+            const rings = [];
+            for (let i = 0; i < 4; i++) {
+                const ring = new THREE.Mesh(
+                    new THREE.TorusGeometry(80 + i * 45, 1.2, 8, 96),
+                    new THREE.MeshBasicMaterial({ color: 0x93f5ff, transparent: true, opacity: 0.26 - i * 0.04, blending: THREE.AdditiveBlending })
+                );
+                ring.rotation.x = Math.PI / 2;
+                ring.position.set(pt.x, 60 + i * 4, pt.z);
+                scene.add(ring);
+                rings.push(ring);
+            }
+
+            const coreLight = new THREE.PointLight(0x5ff5ff, 9, 650);
+            coreLight.position.set(0, -28, 0);
+            group.add(coreLight);
+            const groundLight = new THREE.PointLight(0x5ff5ff, 0, 500);
+            groundLight.position.set(pt.x, 80, pt.z);
+            scene.add(groundLight);
+
+            const drones = [];
+            for (let i = 0; i < 28; i++) {
+                const dg = new THREE.Group();
+                const dBody = new THREE.Mesh(new THREE.CylinderGeometry(2.5, 3.2, 3.2, 6), hullMat);
+                dBody.rotation.x = Math.PI / 2;
+                dg.add(dBody);
+                const dGlow = new THREE.Mesh(new THREE.SphereGeometry(1.2, 8, 6), tealMat.clone());
+                dGlow.position.z = 2.8;
+                dg.add(dGlow);
+                scene.add(dg);
+                drones.push({
+                    group: dg,
+                    angle: (i / 28) * Math.PI * 2,
+                    radius: 78 + (i % 4) * 12,
+                    detachDelay: 40 + i * 3,
+                    target: pt.clone().add(new THREE.Vector3((Math.random() - 0.5) * 230, 0, (Math.random() - 0.5) * 230)),
+                    firedAt: 0,
+                });
+            }
+
+            group.position.set(pt.x, 560, pt.z);
+            motherships.push({
+                group, hull, core, coreRing, blades, rings, drones, coreLight, groundLight,
+                beam: null, target: pt.clone(), age: 0, phase: 'arrival', phaseTimer: 0,
+                detonated: false, drift: new THREE.Vector3((Math.random() - 0.5) * 0.9, 0, (Math.random() - 0.5) * 0.9),
+            });
+            showMessage('The Mothership blots out the sky');
+        }
+
+        function removeMothership(ms) {
+            if (ms.beam) scene.remove(ms.beam);
+            if (ms.group) scene.remove(ms.group);
+            if (ms.groundLight) scene.remove(ms.groundLight);
+            ms.rings.forEach(r => scene.remove(r));
+            ms.drones.forEach(d => scene.remove(d.group));
+        }
+
+        function updateMotherships() {
+            for (let mi = motherships.length - 1; mi >= 0; mi--) {
+                const ms = motherships[mi];
+                ms.age++;
+                ms.phaseTimer++;
+                ms.group.rotation.y += 0.0025;
+                ms.core.rotation.y += 0.08;
+                ms.coreRing.rotation.z += 0.06 + ms.phaseTimer * 0.0004;
+                ms.blades.forEach((b, i) => { b.position.y = Math.sin(ms.age * 0.025 + i) * 1.2; });
+                ms.rings.forEach((r, i) => {
+                    r.rotation.z += 0.004 + i * 0.002;
+                    r.scale.setScalar(1 + Math.sin(ms.age * 0.022 + i) * 0.06);
+                });
+                if (ms.beam) { scene.remove(ms.beam); ms.beam = null; }
+
+                if (ms.phase === 'arrival') {
+                    ms.group.position.y += (355 - ms.group.position.y) * 0.025;
+                    ms.groundLight.intensity = Math.min(7, ms.phaseTimer * 0.05);
+                    if (ms.phaseTimer % 18 === 0) {
+                        applyBlast(ms.target, 160, 1.4, 0.1, 12, false, true);
+                    }
+                    if (ms.phaseTimer > 125) {
+                        ms.phase = 'deploy';
+                        ms.phaseTimer = 0;
+                        showMessage('Mothership drones deploy in formation');
+                    }
+                } else if (ms.phase === 'deploy') {
+                    if (ms.phaseTimer > 160) {
+                        ms.phase = 'charge';
+                        ms.phaseTimer = 0;
+                        showMessage('The Mothership core is charging');
+                    }
+                } else if (ms.phase === 'charge') {
+                    const charge = Math.min(1, ms.phaseTimer / 115);
+                    ms.core.scale.setScalar(1 + charge * 1.4 + Math.sin(ms.age * 0.4) * 0.08);
+                    ms.coreRing.scale.setScalar(1 + charge * 2.2);
+                    ms.coreLight.intensity = 8 + charge * 28;
+                    ms.groundLight.intensity = 8 + charge * 20;
+                    if (ms.phaseTimer > 125) {
+                        ms.phase = 'kill';
+                        ms.phaseTimer = 0;
+                        showMessage('Mothership kill shot: vertical bore beam');
+                    }
+                } else if (ms.phase === 'kill') {
+                    const beamStart = ms.group.position.clone().add(new THREE.Vector3(0, -32, 0));
+                    const beamEnd = ms.target.clone();
+                    beamEnd.y = -18;
+                    ms.beam = makeBeamBetween(beamStart, beamEnd, 18 + Math.sin(ms.age * 0.45) * 2.5, 0x9ffbff, 0.82);
+                    ms.groundLight.intensity = 32;
+                    if (ms.phaseTimer % 8 === 0) {
+                        const ringRadius = 35 + ms.phaseTimer * 0.8;
+                        explode(ms.target, 8 + ms.phaseTimer * 0.35, 0x9ffbff);
+                        worldObjects.forEach(obj => {
+                            if (obj.userData.frozen || obj.userData.hp <= 0) return;
+                            const d = obj.position.distanceTo(ms.target);
+                            if (d < ringRadius + 70) {
+                                const inward = new THREE.Vector3().subVectors(ms.target, obj.position);
+                                if (!obj.userData.isStatic && inward.lengthSq() > 0.01) obj.userData.velocity.add(inward.normalize().multiplyScalar(1.4));
+                                obj.userData.hp -= Math.max(0, 1 - d / (ringRadius + 70)) * 120;
+                            }
+                        });
+                    }
+                    if (ms.phaseTimer > 82) {
+                        ms.phase = 'detonate';
+                        ms.phaseTimer = 0;
+                    }
+                } else if (ms.phase === 'detonate') {
+                    if (!ms.detonated) {
+                        ms.detonated = true;
+                        explode(ms.target, 170, 0xdffeff);
+                        applyBlast(ms.target, 230, 38, 18, 3200, true, true);
+                        shatter(ms.target, 90, 0x93a4b5, 4.5);
+                        igniteRadius(ms.target, 135, true);
+                        showMessage('Subsurface detonation launches the grid upward');
+                    }
+                    if (ms.phaseTimer > 72) {
+                        ms.phase = 'withdraw';
+                        ms.phaseTimer = 0;
+                        showMessage('The Mothership withdraws to the next coordinate');
+                    }
+                } else if (ms.phase === 'withdraw') {
+                    ms.group.position.add(ms.drift);
+                    ms.group.position.y += 1.25;
+                    ms.groundLight.intensity *= 0.96;
+                    if (ms.phaseTimer > 150) {
+                        removeMothership(ms);
+                        motherships.splice(mi, 1);
+                        continue;
+                    }
+                }
+
+                ms.drones.forEach((d, i) => {
+                    const slot = ms.group.position.clone().add(new THREE.Vector3(Math.sin(d.angle + ms.group.rotation.y) * d.radius, -16, Math.cos(d.angle + ms.group.rotation.y) * d.radius));
+                    if (ms.phase === 'arrival' || ms.phaseTimer < d.detachDelay && ms.phase === 'deploy') {
+                        d.group.position.copy(slot);
+                    } else if (ms.phase === 'withdraw') {
+                        d.group.position.lerp(slot, 0.065);
+                    } else {
+                        const hover = d.target.clone();
+                        hover.y = 72 + Math.sin(ms.age * 0.08 + i) * 12;
+                        d.group.position.lerp(hover, 0.025);
+                        if ((ms.phase === 'deploy' || ms.phase === 'charge') && ms.age - d.firedAt > 34 + (i % 5) * 3) {
+                            d.firedAt = ms.age;
+                            const boltEnd = d.target.clone();
+                            boltEnd.y = 2;
+                            const bolt = makeBeamBetween(d.group.position, boltEnd, 1.6, 0x5ff5ff, 0.86);
+                            setTimeout(() => scene.remove(bolt), 95);
+                            applyBlast(boltEnd, 16, 5, 1.2, 420, false, true);
+                            if (Math.random() < 0.35) shatter(boltEnd, 4, 0x7f9aaa, 1.1);
+                        }
+                    }
+                    d.group.lookAt(ms.target.x, 0, ms.target.z);
+                });
+            }
+        }
 
         // ===== LEVIATHAN: drilling serpent =====
         let leviathans = [];
@@ -3290,6 +3766,350 @@ let scene, camera, renderer, controls, raycaster, mouse, ground, grid;
                     k.portalLight.intensity*=0.95;
                     if (k.phaseTimer>=60) { scene.remove(k.portalGroup); scene.remove(k.portalLight); krakens.splice(ki,1); }
                 }
+            }
+        }
+
+        // ===== GROUND MAW: four tentacles drag nearby objects into a toothy mouth =====
+        function spawnGroundMaw(pt) {
+            if (groundMaws.length > 0) { showMessage('A Maw is already feeding!'); return; }
+
+            const group = new THREE.Group();
+            group.position.set(pt.x, 0, pt.z);
+            scene.add(group);
+
+            const holeMat = new THREE.MeshBasicMaterial({ color: 0x030005, transparent: true, opacity: 0.98 });
+            const throatMat = new THREE.MeshBasicMaterial({ color: 0x2a0008, transparent: true, opacity: 0.92 });
+            const lipMat = new THREE.MeshStandardMaterial({
+                color: 0x4b1020,
+                roughness: 0.72,
+                metalness: 0.05,
+                emissive: 0x220008,
+                emissiveIntensity: 0.6
+            });
+            const toothMat = new THREE.MeshStandardMaterial({ color: 0xfff0d0, roughness: 0.5 });
+            const tentacleMat = new THREE.MeshStandardMaterial({
+                color: 0x3b0a2a,
+                roughness: 0.86,
+                metalness: 0.08,
+                emissive: 0x130015,
+                emissiveIntensity: 0.25
+            });
+            const suckerMat = new THREE.MeshStandardMaterial({ color: 0x8f1d4a, roughness: 0.7 });
+
+            const mouth = new THREE.Group();
+            group.add(mouth);
+
+            const hole = new THREE.Mesh(new THREE.CircleGeometry(15, 48), holeMat);
+            hole.rotation.x = -Math.PI / 2;
+            hole.position.y = 0.11;
+            mouth.add(hole);
+
+            const throat = new THREE.Mesh(new THREE.CircleGeometry(10, 36), throatMat);
+            throat.rotation.x = -Math.PI / 2;
+            throat.position.y = 0.16;
+            mouth.add(throat);
+
+            const lip = new THREE.Mesh(new THREE.TorusGeometry(15, 2.4, 12, 56), lipMat);
+            lip.rotation.x = Math.PI / 2;
+            lip.position.y = 0.6;
+            lip.castShadow = true;
+            mouth.add(lip);
+
+            const teeth = [];
+            for (let i = 0; i < 28; i++) {
+                const a = (i / 28) * Math.PI * 2;
+                const r = 12.8 + (i % 2) * 1.6;
+                const tooth = new THREE.Mesh(
+                    new THREE.ConeGeometry(0.55 + (i % 2) * 0.15, 3.4 + Math.random() * 1.2, 6),
+                    toothMat
+                );
+                tooth.position.set(Math.cos(a) * r, 1.2, Math.sin(a) * r);
+                tooth.rotation.z = Math.PI * 0.5;
+                tooth.rotation.y = -a;
+                tooth.castShadow = true;
+                teeth.push(tooth);
+                mouth.add(tooth);
+            }
+
+            for (let i = 0; i < 12; i++) {
+                const a = (i / 12) * Math.PI * 2 + Math.random() * 0.2;
+                const crack = new THREE.Mesh(
+                    new THREE.BoxGeometry(10 + Math.random() * 18, 0.12, 0.45 + Math.random() * 0.4),
+                    new THREE.MeshBasicMaterial({ color: 0x070309, transparent: true, opacity: 0.65 })
+                );
+                crack.position.set(Math.cos(a) * 18, 0.08, Math.sin(a) * 18);
+                crack.rotation.y = -a;
+                mouth.add(crack);
+            }
+
+            const light = new THREE.PointLight(0xff2255, 2.8, 100);
+            light.position.set(pt.x, 7, pt.z);
+            scene.add(light);
+
+            const tentacles = [];
+            for (let i = 0; i < 4; i++) {
+                const angle = (i / 4) * Math.PI * 2 + Math.PI / 4;
+                const root = new THREE.Vector3(Math.cos(angle) * 11, 0.75, Math.sin(angle) * 11);
+                const mesh = new THREE.Mesh(new THREE.TubeGeometry(new THREE.CatmullRomCurve3([
+                    root,
+                    root.clone().add(new THREE.Vector3(Math.cos(angle) * 2, 3, Math.sin(angle) * 2)),
+                    root.clone().add(new THREE.Vector3(Math.cos(angle) * 8, 1.2, Math.sin(angle) * 8))
+                ]), 12, 1.25, 9, false), tentacleMat.clone());
+                mesh.castShadow = true;
+                group.add(mesh);
+
+                const tip = new THREE.Mesh(new THREE.SphereGeometry(2.4, 12, 8), tentacleMat.clone());
+                tip.position.copy(root);
+                tip.castShadow = true;
+                group.add(tip);
+
+                const suckers = [];
+                for (let s = 0; s < 6; s++) {
+                    const sucker = new THREE.Mesh(new THREE.SphereGeometry(0.45, 8, 5), suckerMat.clone());
+                    sucker.scale.set(1, 0.35, 1);
+                    group.add(sucker);
+                    suckers.push(sucker);
+                }
+
+                tentacles.push({
+                    mesh,
+                    tip,
+                    suckers,
+                    angle,
+                    root,
+                    target: null,
+                    state: 'search',
+                    stateTimer: i * -18,
+                    lastTip: root.clone(),
+                    reachPoint: new THREE.Vector3(Math.cos(angle) * 35, 0, Math.sin(angle) * 35),
+                    noise: Math.random() * 100
+                });
+            }
+
+            groundMaws.push({
+                group,
+                mouth,
+                hole,
+                throat,
+                lip,
+                teeth,
+                light,
+                tentacles,
+                pt: pt.clone(),
+                age: 0,
+                attackFrames: 1200,
+                phase: 'emerge',
+                phaseTimer: 0,
+                radius: 125
+            });
+
+            explode(pt, 28, 0x5b1028);
+            showMessage('The Maw is feeding for 20 seconds!');
+        }
+
+        function findMawTarget(maw, tentacle) {
+            let best = null;
+            let bestScore = Infinity;
+            worldObjects.forEach(obj => {
+                if (!obj || obj.userData.hp <= 0 || obj.userData.beingGrabbed || obj.userData.frozen) return;
+                if (obj.userData.type === 'road') return;
+                const dx = obj.position.x - maw.pt.x;
+                const dz = obj.position.z - maw.pt.z;
+                const dist = Math.sqrt(dx * dx + dz * dz);
+                if (dist > maw.radius || dist < 8) return;
+                const targetAngle = Math.atan2(dz, dx);
+                let angleDiff = Math.abs(targetAngle - tentacle.angle);
+                while (angleDiff > Math.PI) angleDiff = Math.abs(angleDiff - Math.PI * 2);
+                const score = dist + angleDiff * 35 - (obj.userData.type === 'house' || obj.userData.type === 'skyscraper' ? 25 : 0);
+                if (score < bestScore) {
+                    bestScore = score;
+                    best = obj;
+                }
+            });
+            return best;
+        }
+
+        function releaseMawTarget(tentacle) {
+            if (!tentacle.target) return;
+            tentacle.target.userData.beingGrabbed = false;
+            tentacle.target.userData.frozen = false;
+            tentacle.target = null;
+        }
+
+        function removeGroundMaw(maw) {
+            maw.tentacles.forEach(releaseMawTarget);
+            scene.remove(maw.group);
+            scene.remove(maw.light);
+            maw.group.traverse(c => {
+                if (!c.isMesh) return;
+                if (c.geometry) c.geometry.dispose();
+                if (Array.isArray(c.material)) c.material.forEach(m => m.dispose());
+                else if (c.material) c.material.dispose();
+            });
+        }
+
+        function despawnAllGroundMaws() {
+            groundMaws.forEach(removeGroundMaw);
+            groundMaws = [];
+        }
+
+        function eatMawTarget(maw, tentacle) {
+            const target = tentacle.target;
+            if (!target) return;
+            const eatPos = target.position.clone();
+            const baseColor = target.userData.type === 'tree' ? 0x3f2a16 : target.userData.type === 'skyscraper' ? 0x6b7280 : 0x7f1d1d;
+            shatter(eatPos, target.userData.type === 'skyscraper' ? 18 : 9, baseColor, 0.5);
+            scene.remove(target);
+            const idx = worldObjects.indexOf(target);
+            if (idx >= 0) worldObjects.splice(idx, 1);
+            tentacle.target = null;
+            tentacle.state = 'chew';
+            tentacle.stateTimer = 0;
+            maw.light.intensity = 5;
+            for (let i = 0; i < 5; i++) createFireParticle(maw.pt.clone().add(new THREE.Vector3((Math.random() - 0.5) * 8, 1, (Math.random() - 0.5) * 8)), true);
+        }
+
+        function updateGroundMawTube(maw, tentacle, tipWorld, retractScale) {
+            const rootWorld = maw.pt.clone().add(tentacle.root);
+            const toward = new THREE.Vector3().subVectors(tipWorld, rootWorld);
+            const mid = rootWorld.clone().addScaledVector(toward, 0.45);
+            const wobble = new THREE.Vector3(
+                Math.sin(maw.age * 0.05 + tentacle.noise) * 5,
+                7 + Math.sin(maw.age * 0.08 + tentacle.noise) * 2,
+                Math.cos(maw.age * 0.045 + tentacle.noise) * 5
+            );
+            mid.add(wobble.multiplyScalar(retractScale));
+            const nearTip = rootWorld.clone().addScaledVector(toward, 0.82);
+            nearTip.y += 2.5 * retractScale;
+            const localPoints = [rootWorld, mid, nearTip, tipWorld].map(p => p.clone().sub(maw.pt));
+            const curve = new THREE.CatmullRomCurve3(localPoints);
+            tentacle.mesh.geometry.dispose();
+            tentacle.mesh.geometry = new THREE.TubeGeometry(curve, 18, 1.35 * retractScale + 0.08, 9, false);
+            tentacle.tip.position.copy(tipWorld).sub(maw.pt);
+            tentacle.tip.scale.setScalar(Math.max(0.08, retractScale));
+            tentacle.suckers.forEach((sucker, si) => {
+                const t = (si + 1) / (tentacle.suckers.length + 1);
+                const p = curve.getPoint(t);
+                sucker.position.copy(p);
+                sucker.position.y -= 0.8;
+                sucker.scale.set(1.1 * retractScale, 0.35 * retractScale, 1.1 * retractScale);
+                sucker.visible = retractScale > 0.1;
+            });
+        }
+
+        function updateGroundMaws() {
+            for (let mi = groundMaws.length - 1; mi >= 0; mi--) {
+                const maw = groundMaws[mi];
+                maw.age++;
+                maw.phaseTimer++;
+
+                if (maw.phase === 'emerge') {
+                    const p = Math.min(1, maw.phaseTimer / 45);
+                    maw.mouth.scale.setScalar(p);
+                    maw.light.intensity = p * 3;
+                    if (p >= 1) { maw.phase = 'attack'; maw.phaseTimer = 0; }
+                } else if (maw.phase === 'attack' && maw.phaseTimer >= maw.attackFrames) {
+                    maw.phase = 'tentacleSink';
+                    maw.phaseTimer = 0;
+                    maw.tentacles.forEach(t => {
+                        releaseMawTarget(t);
+                        t.state = 'sink';
+                        t.stateTimer = 0;
+                    });
+                    showMessage('The Maw sinks back underground');
+                } else if (maw.phase === 'tentacleSink' && maw.phaseTimer >= 130) {
+                    maw.phase = 'mouthSink';
+                    maw.phaseTimer = 0;
+                } else if (maw.phase === 'mouthSink' && maw.phaseTimer >= 85) {
+                    removeGroundMaw(maw);
+                    groundMaws.splice(mi, 1);
+                    continue;
+                }
+
+                const mouthPulse = 1 + Math.sin(maw.age * 0.14) * 0.05;
+                const chew = maw.tentacles.some(t => t.state === 'chew') ? 0.18 : 0;
+                if (maw.phase !== 'mouthSink') maw.lip.scale.set(mouthPulse + chew, mouthPulse + chew, 1);
+                maw.throat.scale.setScalar(0.82 + Math.sin(maw.age * 0.22) * 0.08 + chew);
+                maw.teeth.forEach((tooth, i) => {
+                    tooth.position.y = 1.1 + Math.sin(maw.age * 0.18 + i) * 0.25 - (maw.phase === 'mouthSink' ? maw.phaseTimer * 0.08 : 0);
+                });
+                maw.light.intensity = Math.max(0.8, maw.light.intensity * 0.94);
+
+                const sinkP = maw.phase === 'mouthSink' ? Math.min(1, maw.phaseTimer / 85) : 0;
+                maw.mouth.position.y = -sinkP * 10;
+                maw.mouth.scale.setScalar(Math.max(0.001, 1 - sinkP * 0.95));
+
+                maw.tentacles.forEach((tentacle, ti) => {
+                    tentacle.stateTimer++;
+                    const rootWorld = maw.pt.clone().add(tentacle.root);
+                    let tipWorld = tentacle.lastTip.clone();
+                    let retractScale = 1;
+
+                    if (maw.phase === 'attack') {
+                        if (!tentacle.target || !worldObjects.includes(tentacle.target)) releaseMawTarget(tentacle);
+                        if (!tentacle.target && tentacle.stateTimer > 25) {
+                            const target = findMawTarget(maw, tentacle);
+                            if (target) {
+                                tentacle.target = target;
+                                target.userData.beingGrabbed = true;
+                                target.userData.frozen = true;
+                                tentacle.state = 'grab';
+                                tentacle.stateTimer = 0;
+                            } else {
+                                tentacle.state = 'search';
+                            }
+                        }
+
+                        if (tentacle.target) {
+                            const target = tentacle.target;
+                            const objectHeight = target.userData.totalHeight || target.userData.dimensions?.height || target.userData.trunkHeight || 4;
+                            const desired = target.position.clone();
+                            desired.y = Math.max(3, Math.min(18, objectHeight * 0.5));
+                            const grabP = Math.min(1, tentacle.stateTimer / 45);
+                            tipWorld.lerp(desired, 0.13 + grabP * 0.08);
+                            if (grabP >= 0.75) {
+                                const toMouth = new THREE.Vector3(maw.pt.x - target.position.x, 0, maw.pt.z - target.position.z);
+                                const d = toMouth.length();
+                                if (d > 0.1) {
+                                    const pullSpeed = target.userData.type === 'skyscraper' || target.userData.type === 'mountain' ? 0.42 : 0.62;
+                                    target.position.addScaledVector(toMouth.normalize(), pullSpeed);
+                                }
+                                target.position.y = Math.max(0, target.position.y * 0.92 + 0.2);
+                                target.rotation.x += 0.025;
+                                target.rotation.z += 0.035;
+                                target.userData.hp -= 1.8;
+                                if (d < 22) target.scale.multiplyScalar(0.986);
+                                if (d < 8 || target.scale.x < 0.28 || target.userData.hp <= 0) eatMawTarget(maw, tentacle);
+                            }
+                        } else {
+                            const sweep = tentacle.angle + Math.sin(maw.age * 0.025 + tentacle.noise) * 0.7;
+                            const range = 42 + Math.sin(maw.age * 0.04 + ti) * 16;
+                            tipWorld = new THREE.Vector3(
+                                maw.pt.x + Math.cos(sweep) * range,
+                                2 + Math.sin(maw.age * 0.08 + tentacle.noise) * 1.2,
+                                maw.pt.z + Math.sin(sweep) * range
+                            );
+                        }
+                    } else if (maw.phase === 'tentacleSink') {
+                        const p = Math.min(1, maw.phaseTimer / 130);
+                        const sinkTarget = rootWorld.clone();
+                        sinkTarget.y = -8;
+                        tipWorld.lerp(sinkTarget, 0.08 + p * 0.12);
+                        retractScale = Math.max(0.001, 1 - p);
+                    } else if (maw.phase === 'mouthSink') {
+                        tipWorld.copy(rootWorld);
+                        tipWorld.y = -8;
+                        retractScale = 0.001;
+                    }
+
+                    tentacle.lastTip.copy(tipWorld);
+                    updateGroundMawTube(maw, tentacle, tipWorld, retractScale);
+
+                    if (tentacle.state === 'chew' && tentacle.stateTimer > 25) {
+                        tentacle.state = 'search';
+                        tentacle.stateTimer = 0;
+                    }
+                });
             }
         }
 
@@ -5459,8 +6279,11 @@ let scene, camera, renderer, controls, raycaster, mouse, ground, grid;
             // Survival mode: drive player + camera here so it's in sync with the rest of the sim
             if (gameMode === 'survival' && survivalActive) updateSurvival();
             updateOctopuses();
+            updateMonarch();
+            updateMotherships();
             updateLeviathans();
             updateKrakens();
+            updateGroundMaws();
             updateConstruction();
             updateTour();
             updateTour();
@@ -7670,32 +8493,76 @@ let scene, camera, renderer, controls, raycaster, mouse, ground, grid;
 
         function setupUI() {
             const buildIds = ['house', 'skyscraper', 'tree', 'human', 'builder', 'invader', 'animal', 'river', 'mountain', 'eraser'];
-            const destroyIds = ['fire', 'vortex', 'quake', 'tsunami', 'volcano', 'lavaflood', 'napalm', 'cluster', 'nuke', 'blackhole', 'meteor', 'cracker', 'leviathan', 'kraken'];
+            const destroyIds = ['fire', 'vortex', 'quake', 'tsunami', 'volcano', 'lavaflood', 'napalm', 'cluster', 'nuke', 'blackhole', 'meteor', 'cracker', 'monarch', 'mothership', 'leviathan', 'kraken', 'maw'];
             const ids = [...buildIds, ...destroyIds];
 
-            ids.forEach(id => {
-                const el = document.getElementById('btn-' + id);
-                if (el) el.onclick = () => {
-                    if (currentBrush === id) {
-                        // Same tool clicked again — deselect
-                        currentBrush = null;
-                        el.classList.remove('active');
-                        showMessage('Deselected');
-                        return;
-                    }
-                    currentBrush = id;
-                    document.querySelectorAll('.tool').forEach(b => b.classList.remove('active'));
-                    el.classList.add('active');
-                    const label = el.querySelector('span:not(.icon)')?.innerText || id;
-                    let hint = '';
-                    if (id === 'river') hint = ' · click and drag to draw';
-                    if (id === 'volcano') hint = ' · tap to erupt';
-                    if (id === 'builder') hint = ' · cuts trees and builds houses';
-                    if (id === 'eraser') hint = ' · tap an object to erase';
-                    if (id === 'invader') hint = ' · charges your village';
-                    if (id === 'animal') hint = ' · random species, wanders';
-                    showMessage('Selected: ' + label + hint);
-                };
+            const selectTool = (id, el) => {
+                if (currentBrush === id) {
+                    // Same tool clicked again — deselect
+                    currentBrush = null;
+                    el.classList.remove('active');
+                    showMessage('Deselected');
+                    return;
+                }
+                currentBrush = id;
+                document.querySelectorAll('.tool').forEach(b => b.classList.remove('active'));
+                el.classList.add('active');
+                const label = el.querySelector('span:not(.icon)')?.innerText || id;
+                let hint = '';
+                if (id === 'river') hint = ' · click and drag to draw';
+                if (id === 'volcano') hint = ' · tap to erupt';
+                if (id === 'builder') hint = ' · cuts trees and builds houses';
+                if (id === 'eraser') hint = ' · tap an object to erase';
+                if (id === 'invader') hint = ' · charges your village';
+                if (id === 'animal') hint = ' · random species, wanders';
+                if (id === 'maw') hint = ' · 20 second feeding attack';
+                showMessage('Selected: ' + label + hint);
+            };
+
+            const toolbar = document.getElementById('toolbar');
+            let toolbarTouchTap = null;
+            let lastTouchSelection = null;
+
+            const activateToolFromEvent = (e) => {
+                const tool = e.target.closest('.tool');
+                if (!tool || !tool.id || !tool.id.startsWith('btn-')) return false;
+                const id = tool.id.slice(4);
+                if (!ids.includes(id)) return false;
+                e.preventDefault();
+                e.stopPropagation();
+                selectTool(id, tool);
+                return true;
+            };
+
+            toolbar.addEventListener('click', e => {
+                if (
+                    lastTouchSelection &&
+                    lastTouchSelection.id === e.target.closest('.tool')?.id &&
+                    performance.now() - lastTouchSelection.time < 500
+                ) {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    return;
+                }
+                activateToolFromEvent(e);
+            });
+
+            toolbar.addEventListener('pointerdown', e => {
+                if (e.pointerType === 'mouse') return;
+                const tool = e.target.closest('.tool');
+                toolbarTouchTap = tool ? { id: tool.id, x: e.clientX, y: e.clientY } : null;
+            }, { passive: true });
+
+            toolbar.addEventListener('pointerup', e => {
+                if (e.pointerType === 'mouse' || !toolbarTouchTap) return;
+                const tool = e.target.closest('.tool');
+                const moved = Math.hypot(e.clientX - toolbarTouchTap.x, e.clientY - toolbarTouchTap.y);
+                const isSameTool = tool && tool.id === toolbarTouchTap.id;
+                toolbarTouchTap = null;
+                if (!isSameTool || moved > 10) return;
+                if (activateToolFromEvent(e)) {
+                    lastTouchSelection = { id: tool.id, time: performance.now() };
+                }
             });
 
             // Tab switching
@@ -7710,7 +8577,6 @@ let scene, camera, renderer, controls, raycaster, mouse, ground, grid;
             });
 
             // Collapse/expand toolbar
-            const toolbar = document.getElementById('toolbar');
             const handle = document.getElementById('handle');
             handle.onclick = () => toolbar.classList.toggle('hidden');
             document.getElementById('btn-toggle').onclick = () => toolbar.classList.toggle('hidden');
@@ -7723,20 +8589,24 @@ let scene, camera, renderer, controls, raycaster, mouse, ground, grid;
 
             // Day/Night toggle: cycles Auto → Day → Night → Auto
             const dayNightBtn = document.getElementById('btn-daynight');
+            const setDayNightButton = (icon, label) => {
+                dayNightBtn.innerHTML = `<span class="icon">${icon}</span><span class="btn-label">${label}</span>`;
+                dayNightBtn.setAttribute('aria-label', label);
+            };
             dayNightBtn.onclick = () => {
                 if (dayNightMode === 'auto') {
                     dayNightMode = 'day';
                     dayPhase = 0.5; // noon
-                    dayNightBtn.innerText = '☀️';
+                    setDayNightButton('☀️', 'Day');
                     showMessage('Day (locked)');
                 } else if (dayNightMode === 'day') {
                     dayNightMode = 'night';
                     dayPhase = 0.0; // midnight
-                    dayNightBtn.innerText = '🌙';
+                    setDayNightButton('🌙', 'Night');
                     showMessage('Night (locked)');
                 } else {
                     dayNightMode = 'auto';
-                    dayNightBtn.innerText = '🔄';
+                    setDayNightButton('🔄', 'Auto');
                     showMessage('Day/Night auto cycle');
                 }
             };
@@ -7783,10 +8653,9 @@ let scene, camera, renderer, controls, raycaster, mouse, ground, grid;
                     l.segGroups.forEach(sg => scene.remove(sg));
                 });
                 leviathans = [];
-                if (monarchInstance) {
-                    if (monarchInstance.group) scene.remove(monarchInstance.group);
-                    monarchInstance = null;
-                }
+                removeMonarch();
+                motherships.forEach(ms => removeMothership(ms));
+                motherships = [];
                 krakens.forEach(k => {
                     scene.remove(k.portalGroup);
                     if (k.portalLight) scene.remove(k.portalLight);
@@ -7794,6 +8663,7 @@ let scene, camera, renderer, controls, raycaster, mouse, ground, grid;
                     k.tentacles.forEach(t => { if (t.target) t.target.userData.beingGrabbed = false; });
                 });
                 krakens = [];
+                despawnAllGroundMaws();
                 despawnAllTornadoes();
                 despawnAllTsunamis();
                 despawnAllVolcanoes();
@@ -7903,8 +8773,11 @@ let scene, camera, renderer, controls, raycaster, mouse, ground, grid;
                 k.tentacles.forEach(t => { if (t.target) t.target.userData.beingGrabbed = false; });
             });
             krakens = [];
+            despawnAllGroundMaws();
             octopuses = [];
-            if (monarchInstance) { if (monarchInstance.group) scene.remove(monarchInstance.group); monarchInstance = null; }
+            removeMonarch();
+            motherships.forEach(ms => removeMothership(ms));
+            motherships = [];
             despawnAllTornadoes();
             despawnAllTsunamis();
             despawnAllVolcanoes();

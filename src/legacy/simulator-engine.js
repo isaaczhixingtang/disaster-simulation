@@ -4350,7 +4350,8 @@ let scene, camera, renderer, controls, raycaster, mouse, ground, grid;
                     let retractScale = 1;
 
                     if (maw.phase === 'attack') {
-                        if (!tentacle.target || !worldObjects.includes(tentacle.target)) releaseMawTarget(tentacle);
+                        const targetIsSurvivalPlayer = tentacle.target && tentacle.target.userData && tentacle.target.userData.type === 'player';
+                        if (!tentacle.target || (!targetIsSurvivalPlayer && !worldObjects.includes(tentacle.target))) releaseMawTarget(tentacle);
                         if (!tentacle.target && tentacle.stateTimer > 25) {
                             const target = findMawTarget(maw, tentacle);
                             if (target) {
@@ -4366,24 +4367,27 @@ let scene, camera, renderer, controls, raycaster, mouse, ground, grid;
 
                         if (tentacle.target) {
                             const target = tentacle.target;
+                            const isPlayerTarget = target.userData.type === 'player';
                             const objectHeight = target.userData.totalHeight || target.userData.dimensions?.height || target.userData.trunkHeight || 4;
                             const desired = target.position.clone();
-                            desired.y = Math.max(3, Math.min(18, objectHeight * 0.5));
+                            desired.y = isPlayerTarget ? target.position.y + 1.4 : Math.max(3, Math.min(18, objectHeight * 0.5));
                             const grabP = Math.min(1, tentacle.stateTimer / 45);
                             tipWorld.lerp(desired, 0.13 + grabP * 0.08);
                             if (grabP >= 0.75) {
                                 const toMouth = new THREE.Vector3(maw.pt.x - target.position.x, 0, maw.pt.z - target.position.z);
                                 const d = toMouth.length();
                                 if (d > 0.1) {
-                                    const pullSpeed = target.userData.type === 'skyscraper' || target.userData.type === 'mountain' ? 0.42 : 0.62;
+                                    const pullSpeed = isPlayerTarget ? 0.28 : target.userData.type === 'skyscraper' || target.userData.type === 'mountain' ? 0.42 : 0.62;
                                     target.position.addScaledVector(toMouth.normalize(), pullSpeed);
                                 }
-                                target.position.y = Math.max(0, target.position.y * 0.92 + 0.2);
-                                target.rotation.x += 0.025;
-                                target.rotation.z += 0.035;
-                                target.userData.hp -= 1.8;
-                                if (d < 22) target.scale.multiplyScalar(0.986);
-                                if (d < 8 || target.scale.x < 0.28 || target.userData.hp <= 0) eatMawTarget(maw, tentacle);
+                                if (!isPlayerTarget) {
+                                    target.position.y = Math.max(0, target.position.y * 0.92 + 0.2);
+                                    target.rotation.x += 0.025;
+                                    target.rotation.z += 0.035;
+                                    target.userData.hp -= 1.8;
+                                    if (d < 22) target.scale.multiplyScalar(0.986);
+                                }
+                                if (target.userData.type !== 'player' && (d < 8 || target.scale.x < 0.28 || target.userData.hp <= 0)) eatMawTarget(maw, tentacle);
                             }
                         } else {
                             const sweep = tentacle.angle + Math.sin(maw.age * 0.025 + tentacle.noise) * 0.7;
@@ -10729,10 +10733,15 @@ let scene, camera, renderer, controls, raycaster, mouse, ground, grid;
                 btn.addEventListener('pointerdown', e => {
                     e.preventDefault();
                     survivalKeys[key] = true;
+                    if (key === 'Digit1' && !survivalPunchPressed) {
+                        survivalPunchPressed = true;
+                        survivalPunch();
+                    }
                 });
                 btn.addEventListener('pointerup', e => {
                     e.preventDefault();
                     survivalKeys[key] = false;
+                    if (key === 'Digit1') survivalPunchPressed = false;
                     if (key === 'KeyE') {
                         survivalActionPressed = false;
                         survivalChopProgress = 0;
@@ -10741,6 +10750,7 @@ let scene, camera, renderer, controls, raycaster, mouse, ground, grid;
                 });
                 btn.addEventListener('pointercancel', e => {
                     survivalKeys[key] = false;
+                    if (key === 'Digit1') survivalPunchPressed = false;
                     if (key === 'KeyE') {
                         survivalActionPressed = false;
                         survivalChopProgress = 0;
@@ -10749,6 +10759,7 @@ let scene, camera, renderer, controls, raycaster, mouse, ground, grid;
                 });
                 btn.addEventListener('pointerleave', e => {
                     survivalKeys[key] = false;
+                    if (key === 'Digit1') survivalPunchPressed = false;
                     if (key === 'KeyE') {
                         survivalActionPressed = false;
                         survivalChopProgress = 0;
@@ -10844,6 +10855,7 @@ let scene, camera, renderer, controls, raycaster, mouse, ground, grid;
         let survivalPunchTimer = 0;
         let survivalMawGrab = null;
         let survivalMawReleaseUntil = 0;
+        let survivalHands = null;
         const SURVIVAL_EYE_HEIGHT = 2.5;
         const SURVIVAL_MOVE_SPEED = 0.32; // villager walking pace
         const SURVIVAL_LOOK_KEY_SPEED = 0.045;
@@ -10910,6 +10922,7 @@ let scene, camera, renderer, controls, raycaster, mouse, ground, grid;
         }
 
         function releaseSurvivalMawGrab(message = 'Maw released you') {
+            if (survivalMawGrab && survivalMawGrab.tentacle) releaseMawTarget(survivalMawGrab.tentacle);
             survivalMawGrab = null;
             survivalMawReleaseUntil = performance.now() + 2500;
             showSurvivalToast(message);
@@ -10917,14 +10930,61 @@ let scene, camera, renderer, controls, raycaster, mouse, ground, grid;
 
         function survivalPunch() {
             if (!survivalActive || !survivalPlayer) return;
-            survivalPunchTimer = 12;
+            survivalPunchTimer = 14;
             if (survivalMawGrab && groundMaws.includes(survivalMawGrab.maw)) {
                 survivalMawGrab.punches++;
-                if (survivalMawGrab.punches >= 10) {
+                if (survivalMawGrab.punches >= 3) {
                     releaseSurvivalMawGrab('Maw let go');
                 } else {
-                    showSurvivalToast(`Maw punches: ${survivalMawGrab.punches}/10`);
+                    showSurvivalToast(`Maw punches: ${survivalMawGrab.punches}/3`);
                 }
+            }
+        }
+
+        function buildSurvivalHands() {
+            const group = new THREE.Group();
+            group.name = 'survival-first-person-hands';
+            const skinMat = new THREE.MeshBasicMaterial({ color: 0xf5c28b });
+            const sleeveMat = new THREE.MeshBasicMaterial({ color: 0x2563eb });
+
+            function makeHand(side) {
+                const handGroup = new THREE.Group();
+                handGroup.position.set(side * 0.35, -0.36, -0.7);
+                const sleeve = new THREE.Mesh(new THREE.CylinderGeometry(0.07, 0.09, 0.5, 8), sleeveMat);
+                sleeve.rotation.x = Math.PI / 2;
+                sleeve.position.z = 0.18;
+                handGroup.add(sleeve);
+
+                const fist = new THREE.Mesh(new THREE.SphereGeometry(0.13, 12, 10), skinMat);
+                fist.scale.set(1.05, 0.9, 1.25);
+                fist.position.z = -0.12;
+                handGroup.add(fist);
+
+                group.add(handGroup);
+                return handGroup;
+            }
+
+            group.userData.left = makeHand(-1);
+            group.userData.right = makeHand(1);
+            group.visible = false;
+            return group;
+        }
+
+        function updateSurvivalHands() {
+            if (!survivalHands) return;
+            survivalHands.visible = survivalActive;
+            const right = survivalHands.userData.right;
+            const left = survivalHands.userData.left;
+            const t = survivalPunchTimer > 0 ? survivalPunchTimer / 14 : 0;
+            const jab = Math.sin(t * Math.PI);
+            if (right) {
+                right.position.set(0.35, -0.36 - jab * 0.04, -0.7 - jab * 0.48);
+                right.rotation.x = -jab * 0.5;
+                right.rotation.z = -0.15 - jab * 0.18;
+            }
+            if (left) {
+                left.position.set(-0.35, -0.4 + jab * 0.03, -0.62 + jab * 0.08);
+                left.rotation.z = 0.18;
             }
         }
 
@@ -11048,6 +11108,12 @@ let scene, camera, renderer, controls, raycaster, mouse, ground, grid;
             survivalPlayer.rotation.y = Math.PI;
             survivalPlayer.visible = false; // first person — avatar invisible
             scene.add(survivalPlayer);
+            survivalPlayer.userData.type = 'player';
+            survivalPlayer.userData.hp = Infinity;
+
+            if (!survivalHands) survivalHands = buildSurvivalHands();
+            if (!survivalHands.parent) camera.add(survivalHands);
+            if (!camera.parent) scene.add(camera);
 
             // Initialize yaw/pitch
             survivalYaw = Math.PI;
@@ -11103,6 +11169,7 @@ let scene, camera, renderer, controls, raycaster, mouse, ground, grid;
             if (survivalPlayer && survivalPlayer.parent) {
                 scene.remove(survivalPlayer);
             }
+            if (survivalHands) survivalHands.visible = false;
 
             // Keep grass in scene
 
@@ -11158,6 +11225,7 @@ let scene, camera, renderer, controls, raycaster, mouse, ground, grid;
             );
             const target = camera.position.clone().add(dir);
             camera.lookAt(target);
+            updateSurvivalHands();
         }
 
         // Legacy alias points to first-person updater now
@@ -11450,7 +11518,13 @@ let scene, camera, renderer, controls, raycaster, mouse, ground, grid;
             let heldByValidMaw = false;
             if (survivalMawGrab && groundMaws.includes(survivalMawGrab.maw) && survivalMawGrab.maw.phase === 'attack') {
                 heldByValidMaw = true;
+                if (survivalMawGrab.tentacle && survivalMawGrab.tentacle.target !== survivalPlayer) {
+                    survivalMawGrab.tentacle.target = survivalPlayer;
+                    survivalMawGrab.tentacle.state = 'grab';
+                    survivalMawGrab.tentacle.stateTimer = Math.max(survivalMawGrab.tentacle.stateTimer, 18);
+                }
             } else {
+                if (survivalMawGrab && survivalMawGrab.tentacle) releaseMawTarget(survivalMawGrab.tentacle);
                 survivalMawGrab = null;
             }
 
@@ -11458,9 +11532,8 @@ let scene, camera, renderer, controls, raycaster, mouse, ground, grid;
                 for (const maw of groundMaws) {
                     if (maw.phase !== 'attack') continue;
                     const dist = playerPos.distanceTo(maw.pt);
-                    if (dist < Math.min(42, maw.radius)) {
-                        survivalMawGrab = { maw, punches: 0, swallowed: false };
-                        showSurvivalToast('Maw grabbed you: punch 10x');
+                    if (dist < Math.min(72, maw.radius)) {
+                        startSurvivalMawGrab(maw);
                         break;
                     }
                 }
@@ -11475,6 +11548,7 @@ let scene, camera, renderer, controls, raycaster, mouse, ground, grid;
                 if (d < 7 && !survivalMawGrab.swallowed) {
                     survivalMawGrab.swallowed = true;
                     applySurvivalDamage(100, 'maw swallow', 0, 'maw-swallow');
+                    if (survivalMawGrab.tentacle) releaseMawTarget(survivalMawGrab.tentacle);
                     survivalMawGrab = null;
                     survivalMawReleaseUntil = now + 3500;
                 }
@@ -11514,6 +11588,33 @@ let scene, camera, renderer, controls, raycaster, mouse, ground, grid;
                 const elapsed = Math.floor((performance.now() - survivalStartTime) / 1000);
                 timeEl.innerText = elapsed + 's';
             }
+        }
+
+        function startSurvivalMawGrab(maw) {
+            if (!maw || !survivalPlayer) return;
+            let bestTentacle = null;
+            let bestScore = Infinity;
+            maw.tentacles.forEach((tentacle, i) => {
+                const busyPenalty = tentacle.target ? 1000 : 0;
+                const tip = tentacle.lastTip || maw.pt.clone().add(tentacle.root);
+                const score = tip.distanceTo(survivalPlayer.position) + busyPenalty + i * 0.01;
+                if (score < bestScore) {
+                    bestScore = score;
+                    bestTentacle = tentacle;
+                }
+            });
+
+            if (bestTentacle) {
+                releaseMawTarget(bestTentacle);
+                bestTentacle.target = survivalPlayer;
+                bestTentacle.state = 'grab';
+                bestTentacle.stateTimer = 18;
+                survivalPlayer.userData.beingGrabbed = true;
+                survivalPlayer.userData.frozen = true;
+            }
+
+            survivalMawGrab = { maw, tentacle: bestTentacle, punches: 0, swallowed: false };
+            showSurvivalToast('Maw grabbed you: punch 3x');
         }
 
         // Find what the player is looking at within 6 units in front

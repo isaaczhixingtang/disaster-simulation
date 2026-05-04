@@ -3,6 +3,7 @@ const moveButtons = [
   ["left", "ArrowLeft", "◀"],
   ["down", "ArrowDown", "▼"],
   ["right", "ArrowRight", "▶"],
+  ["punch", "Digit1", "👊"],
   ["action", "KeyE", "🪓"],
 ];
 

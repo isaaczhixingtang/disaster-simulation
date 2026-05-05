@@ -7,6 +7,11 @@ let scene, camera, renderer, controls, raycaster, mouse, ground, grid;
         let worldObjects = [];
         let debris = [];
         let fireParticles = [];
+        let cannonBalls = [];
+        let shipSwimmers = [];
+        let whirlpools = [];
+        let boardingActions = [];
+        let boardingArrows = [];
         let currentBrush = 'house';
         // Multi-target system: Shift+click with a destroy weapon queues positions
         let multiTargets = []; // Array of THREE.Vector3
@@ -122,7 +127,7 @@ let scene, camera, renderer, controls, raycaster, mouse, ground, grid;
         }
 
         // Build/destroy tools
-        const DESTROY_TOOLS = new Set(['fire','vortex','quake','tsunami','volcano','lavaflood','napalm','cluster','nuke','blackhole','meteor','cracker','monarch','battleship','mothership','leviathan','kraken','maw']);
+        const DESTROY_TOOLS = new Set(['fire','vortex','whirlpool','quake','tsunami','volcano','lavaflood','napalm','cluster','nuke','blackhole','meteor','cracker','monarch','battleship','mothership','leviathan','kraken','maw']);
 
         function addMultiTarget(pt) {
             multiTargets.push(pt.clone());
@@ -243,7 +248,7 @@ let scene, camera, renderer, controls, raycaster, mouse, ground, grid;
             const pt = screenToGround(e);
             if (!pt) return;
 
-            if (['house', 'skyscraper', 'tree', 'human', 'builder', 'invader', 'animal', 'mountain'].includes(currentBrush)) {
+            if (['house', 'skyscraper', 'tree', 'human', 'builder', 'invader', 'animal', 'mountain', 'island', 'ship'].includes(currentBrush)) {
                 placeObject(currentBrush, pt);
             } else if (DESTROY_TOOLS.has(currentBrush)) {
                 if (e.shiftKey) {
@@ -1577,6 +1582,85 @@ let scene, camera, renderer, controls, raycaster, mouse, ground, grid;
             group.userData.palette = pal.name;
         }
 
+        function buildIsland(group) {
+            const radiusX = 9 + Math.random() * 10;
+            const radiusZ = 7 + Math.random() * 9;
+            const height = 1.4 + Math.random() * 1.2;
+            const segments = 22 + Math.floor(Math.random() * 10);
+            const islandSeed = Math.random() * Math.PI * 2;
+            const sandMat = new THREE.MeshStandardMaterial({ color: jitterColor(0xd6b36a, 0.12), roughness: 0.95 });
+            const grassMat = new THREE.MeshStandardMaterial({ color: jitterColor(0x3f8f3a, 0.16), roughness: 0.9 });
+            const rockMat = new THREE.MeshStandardMaterial({ color: jitterColor(0x78716c, 0.16), roughness: 0.9 });
+
+            const makeBlob = (scaleX, scaleZ, y, mat, thickness = 0.3) => {
+                const shape = new THREE.Shape();
+                for (let i = 0; i <= segments; i++) {
+                    const a = (i / segments) * Math.PI * 2;
+                    const wobble =
+                        1 +
+                        Math.sin(a * 2.1 + islandSeed) * 0.12 +
+                        Math.cos(a * 3.7 + islandSeed * 1.6) * 0.08 +
+                        (Math.random() - 0.5) * 0.08;
+                    const x = Math.cos(a) * scaleX * wobble;
+                    const z = Math.sin(a) * scaleZ * wobble;
+                    if (i === 0) shape.moveTo(x, z);
+                    else shape.lineTo(x, z);
+                }
+                const geo = new THREE.ExtrudeGeometry(shape, { depth: thickness, bevelEnabled: true, bevelSize: 0.35, bevelThickness: 0.25, bevelSegments: 2 });
+                const mesh = new THREE.Mesh(geo, mat);
+                mesh.rotation.x = -Math.PI / 2;
+                mesh.position.y = y;
+                mesh.castShadow = true;
+                mesh.receiveShadow = true;
+                group.add(mesh);
+                return mesh;
+            };
+
+            makeBlob(radiusX, radiusZ, 0.25, sandMat, 0.55);
+            makeBlob(radiusX * (0.68 + Math.random() * 0.12), radiusZ * (0.62 + Math.random() * 0.14), height, grassMat, 0.35);
+
+            const hill = new THREE.Mesh(
+                new THREE.ConeGeometry(Math.min(radiusX, radiusZ) * (0.35 + Math.random() * 0.18), height * (1.2 + Math.random() * 0.8), 9),
+                new THREE.MeshStandardMaterial({ color: jitterColor(0x5f7f3a, 0.14), roughness: 0.95 })
+            );
+            hill.position.set((Math.random() - 0.5) * radiusX * 0.35, height * 0.95, (Math.random() - 0.5) * radiusZ * 0.35);
+            hill.rotation.y = Math.random() * Math.PI * 2;
+            hill.castShadow = true;
+            hill.receiveShadow = true;
+            group.add(hill);
+
+            const treeCount = 4 + Math.floor(Math.random() * 8);
+            for (let i = 0; i < treeCount; i++) {
+                const tree = new THREE.Group();
+                buildTree(tree);
+                const a = Math.random() * Math.PI * 2;
+                const r = Math.sqrt(Math.random()) * 0.72;
+                tree.position.set(Math.cos(a) * radiusX * r, height + 0.45, Math.sin(a) * radiusZ * r);
+                tree.scale.setScalar(0.32 + Math.random() * 0.24);
+                group.add(tree);
+            }
+
+            const rockCount = 3 + Math.floor(Math.random() * 5);
+            for (let i = 0; i < rockCount; i++) {
+                const rock = new THREE.Mesh(new THREE.DodecahedronGeometry(0.6 + Math.random() * 1.2, 0), rockMat);
+                const a = Math.random() * Math.PI * 2;
+                const r = 0.72 + Math.random() * 0.22;
+                rock.position.set(Math.cos(a) * radiusX * r, 0.75, Math.sin(a) * radiusZ * r);
+                rock.scale.y = 0.45 + Math.random() * 0.6;
+                rock.rotation.set(Math.random() * Math.PI, Math.random() * Math.PI, Math.random() * Math.PI);
+                rock.castShadow = true;
+                group.add(rock);
+            }
+
+            group.rotation.y = Math.random() * Math.PI * 2;
+            group.userData.type = 'island';
+            group.userData.isStatic = true;
+            group.userData.hp = 900 + Math.random() * 700;
+            group.userData.maxHp = group.userData.hp;
+            group.userData.footprint = Math.max(radiusX, radiusZ) * 2;
+            group.userData.islandSeed = islandSeed;
+        }
+
         function placeObject(type, pt) {
             const group = new THREE.Group();
             group.userData = {
@@ -1602,8 +1686,12 @@ let scene, camera, renderer, controls, raycaster, mouse, ground, grid;
                 buildTree(group);
             } else if (type === 'mountain') {
                 buildMountain(group);
+            } else if (type === 'island') {
+                buildIsland(group);
             } else if (type === 'animal') {
                 buildAnimal(group);
+            } else if (type === 'ship') {
+                build1930sShip(group);
             } else if (type === 'human') {
                 const mat = new THREE.MeshStandardMaterial({ color: 0x3b82f6 });
                 const body = new THREE.Mesh(new THREE.CylinderGeometry(0.5, 0.5, 1.2), mat);
@@ -1821,6 +1909,8 @@ let scene, camera, renderer, controls, raycaster, mouse, ground, grid;
                 const dx = camera.position.x - pt.x;
                 const dz = camera.position.z - pt.z;
                 group.rotation.y = Math.atan2(dx, dz);
+            } else if (type === 'ship') {
+                group.rotation.y = Math.random() * Math.PI * 2;
             }
 
             storeOriginalColors(group);
@@ -1866,6 +1956,153 @@ let scene, camera, renderer, controls, raycaster, mouse, ground, grid;
                 0,
                 center.z + Math.sin(angle) * radius
             );
+        }
+
+        function buildShipCrewMember(role = 'crew') {
+            const group = new THREE.Group();
+            const coatColor = role === 'bucket' ? 0xfacc15 : 0x1d4ed8;
+            group.userData.role = role;
+            const coat = new THREE.Mesh(
+                new THREE.CylinderGeometry(0.16, 0.18, 0.55, 6),
+                new THREE.MeshStandardMaterial({ color: coatColor, roughness: 0.9 })
+            );
+            coat.position.y = 0.45;
+            group.add(coat);
+            const head = new THREE.Mesh(
+                new THREE.SphereGeometry(0.16, 8, 6),
+                new THREE.MeshStandardMaterial({ color: 0xd8a47f, roughness: 0.8 })
+            );
+            head.position.y = 0.83;
+            group.add(head);
+            const cap = new THREE.Mesh(
+                new THREE.CylinderGeometry(0.17, 0.19, 0.08, 8),
+                new THREE.MeshStandardMaterial({ color: 0x111827, roughness: 0.9 })
+            );
+            cap.position.y = 0.98;
+            group.add(cap);
+            if (role === 'bucket') {
+                const bucket = new THREE.Mesh(
+                    new THREE.CylinderGeometry(0.12, 0.09, 0.18, 8),
+                    new THREE.MeshStandardMaterial({ color: 0x94a3b8, metalness: 0.3, roughness: 0.5 })
+                );
+                bucket.position.set(0.28, 0.35, 0);
+                group.add(bucket);
+                group.userData.bucket = bucket;
+            } else {
+                const sword = new THREE.Group();
+                const blade = new THREE.Mesh(
+                    new THREE.BoxGeometry(0.05, 0.7, 0.04),
+                    new THREE.MeshStandardMaterial({ color: 0xd1d5db, metalness: 0.7, roughness: 0.35 })
+                );
+                blade.position.y = 0.35;
+                sword.add(blade);
+                const hilt = new THREE.Mesh(
+                    new THREE.BoxGeometry(0.28, 0.05, 0.06),
+                    new THREE.MeshStandardMaterial({ color: 0x7c2d12, roughness: 0.6 })
+                );
+                hilt.position.y = 0.02;
+                sword.add(hilt);
+                sword.position.set(0.28, 0.44, 0.06);
+                sword.rotation.z = -0.65;
+                sword.visible = false;
+                group.add(sword);
+                group.userData.sword = sword;
+            }
+            return group;
+        }
+
+        function build1930sShip(group) {
+            const hullMat = new THREE.MeshStandardMaterial({ color: 0x6b3f22, roughness: 0.85 });
+            const darkHullMat = new THREE.MeshStandardMaterial({ color: 0x3b2416, roughness: 0.95 });
+            const deckMat = new THREE.MeshStandardMaterial({ color: 0xc08457, roughness: 0.9 });
+            const sailMat = new THREE.MeshStandardMaterial({ color: 0xf5efe0, roughness: 0.75, side: THREE.DoubleSide });
+            const metalMat = new THREE.MeshStandardMaterial({ color: 0x1f2937, metalness: 0.45, roughness: 0.55 });
+
+            const hull = new THREE.Mesh(new THREE.BoxGeometry(16, 3.2, 5.4), hullMat);
+            hull.position.y = 2.2;
+            hull.castShadow = true;
+            group.add(hull);
+
+            const bow = new THREE.Mesh(new THREE.ConeGeometry(2.7, 3.8, 4), darkHullMat);
+            bow.rotation.z = Math.PI / 2;
+            bow.rotation.y = Math.PI / 4;
+            bow.position.set(9, 2.2, 0);
+            bow.castShadow = true;
+            group.add(bow);
+
+            const stern = new THREE.Mesh(new THREE.BoxGeometry(2.4, 3.6, 5.8), darkHullMat);
+            stern.position.set(-8.6, 2.4, 0);
+            stern.castShadow = true;
+            group.add(stern);
+
+            const deck = new THREE.Mesh(new THREE.BoxGeometry(15.4, 0.35, 4.8), deckMat);
+            deck.position.y = 4.0;
+            deck.castShadow = true;
+            group.add(deck);
+
+            const cabin = new THREE.Mesh(new THREE.BoxGeometry(3.4, 1.7, 2.6), deckMat);
+            cabin.position.set(-3.5, 5.0, 0);
+            cabin.castShadow = true;
+            group.add(cabin);
+
+            const funnel = new THREE.Mesh(new THREE.CylinderGeometry(0.45, 0.55, 2.6, 12), metalMat);
+            funnel.position.set(-5.2, 6.1, 0);
+            funnel.castShadow = true;
+            group.add(funnel);
+
+            const mastMat = new THREE.MeshStandardMaterial({ color: 0x4b2f1b, roughness: 0.9 });
+            [-1.0, 4.0].forEach(x => {
+                const mast = new THREE.Mesh(new THREE.CylinderGeometry(0.14, 0.18, 8, 8), mastMat);
+                mast.position.set(x, 8.0, 0);
+                mast.castShadow = true;
+                group.add(mast);
+                const sail = new THREE.Mesh(new THREE.PlaneGeometry(3.4, 4.2), sailMat);
+                sail.position.set(x + 0.35, 8.1, 0.08);
+                sail.rotation.y = Math.PI / 2;
+                group.add(sail);
+            });
+
+            const cannons = [];
+            [-1, 1].forEach(side => {
+                for (let i = 0; i < 3; i++) {
+                    const cannon = new THREE.Mesh(new THREE.CylinderGeometry(0.18, 0.22, 1.4, 10), metalMat);
+                    cannon.rotation.x = Math.PI / 2;
+                    cannon.position.set(-3 + i * 3.2, 4.35, side * 3.0);
+                    cannon.userData.side = side;
+                    cannon.castShadow = true;
+                    group.add(cannon);
+                    cannons.push(cannon);
+                }
+            });
+
+            const crew = [];
+            for (let i = 0; i < 8; i++) {
+                const member = buildShipCrewMember(i < 4 ? 'bucket' : 'crew');
+                member.position.set(-5.5 + i * 1.5, 4.2, (Math.random() - 0.5) * 2.4);
+                member.rotation.y = Math.random() * Math.PI * 2;
+                group.add(member);
+                crew.push(member);
+            }
+
+            group.userData.type = 'ship';
+            group.userData.hp = 520;
+            group.userData.maxHp = 520;
+            group.userData.footprint = 18;
+            group.userData.isShip = true;
+            group.userData.cannons = cannons;
+            group.userData.crew = crew;
+            group.userData.crewCount = crew.length;
+            group.userData.speed = 0.05 + Math.random() * 0.04;
+            group.userData.rudder = (Math.random() - 0.5) * 0.01;
+            group.userData.fireLevel = 0;
+            group.userData.hullLeaks = 0;
+            group.userData.waterLevel = 0;
+            group.userData.sinking = false;
+            group.userData.sinkTimer = 0;
+            group.userData.shootCooldown = 40 + Math.random() * 80;
+            group.userData.bucketTimer = 0;
+            group.userData.fleeing = false;
+            group.userData.boardingLock = null;
         }
 
         // --- DEBRIS: now have HP, can be burned and destroyed ---
@@ -1930,6 +2167,9 @@ let scene, camera, renderer, controls, raycaster, mouse, ground, grid;
                 spawnGroundMaw(pt);
             } else if (type === 'vortex') {
                 spawnTornado(pt);
+            } else if (type === 'whirlpool') {
+                spawnWhirlpool(pt, 30, 1200);
+                showMessage('Whirlpool opened: ships are being pulled in');
             } else if (type === 'quake') {
                 earthquake();
             } else if (type === 'napalm') {
@@ -4552,6 +4792,415 @@ let scene, camera, renderer, controls, raycaster, mouse, ground, grid;
             crossbowBolts.push(bolt);
         }
 
+        function spawnCannonBall(fromPos, targetShip, ownerShip) {
+            const ball = new THREE.Mesh(
+                new THREE.SphereGeometry(0.45, 12, 10),
+                new THREE.MeshStandardMaterial({ color: 0x171717, metalness: 0.6, roughness: 0.35 })
+            );
+            ball.position.copy(fromPos);
+            const targetPos = targetShip.position.clone().add(new THREE.Vector3(
+                (Math.random() - 0.5) * 6,
+                4 + Math.random() * 2,
+                (Math.random() - 0.5) * 3
+            ));
+            const dx = targetPos.x - fromPos.x;
+            const dy = targetPos.y - fromPos.y;
+            const dz = targetPos.z - fromPos.z;
+            const horizDist = Math.sqrt(dx * dx + dz * dz);
+            const flightTime = Math.max(40, Math.min(110, horizDist / 1.2));
+            const gravity = 0.035;
+            ball.userData = {
+                type: 'cannonball',
+                ownerShip,
+                targetShip,
+                vel: new THREE.Vector3(dx / flightTime, (dy + 0.5 * gravity * flightTime * flightTime) / flightTime, dz / flightTime),
+                gravity,
+                age: 0
+            };
+            scene.add(ball);
+            cannonBalls.push(ball);
+        }
+
+        function findShipTarget(ship) {
+            let best = null;
+            let bestD = Infinity;
+            worldObjects.forEach(other => {
+                if (other === ship) return;
+                if (other.userData.type !== 'ship') return;
+                if (other.userData.hp <= 0 || other.userData.sinking) return;
+                const d = other.position.distanceTo(ship.position);
+                if (d < bestD) {
+                    bestD = d;
+                    best = other;
+                }
+            });
+            return bestD < 190 ? best : null;
+        }
+
+        function shipWorldPoint(ship, local) {
+            return local.clone().applyEuler(ship.rotation).add(ship.position);
+        }
+
+        function livingShipCrew(ship, includeBuckets = true) {
+            const crew = ship.userData.crew || [];
+            return crew.filter(c => !c.userData.dead && !c.userData.overboard && c.parent && (includeBuckets || c.userData.role !== 'bucket'));
+        }
+
+        function killShipCrewMember(ship, crew) {
+            if (!ship || !crew || crew.userData.dead) return;
+            crew.userData.dead = true;
+            if (crew.userData.sword) crew.userData.sword.visible = false;
+            ship.remove(crew);
+            ship.userData.crewLost = (ship.userData.crewLost || 0) + 1;
+            ship.userData.crewCount = Math.max(0, (ship.userData.crewCount || 0) - 1);
+            const splash = shipWorldPoint(ship, crew.position).add(new THREE.Vector3(0, 0.6, 0));
+            for (let i = 0; i < 4; i++) {
+                createFireParticle(splash.clone().add(new THREE.Vector3((Math.random() - 0.5) * 0.8, Math.random() * 0.7, (Math.random() - 0.5) * 0.8)), true);
+            }
+        }
+
+        function spawnBoardingArrow(fromShip, fromCrew, targetShip, targetCrew) {
+            if (!fromCrew || !targetCrew) return;
+            const shaftMat = new THREE.MeshStandardMaterial({ color: 0x5b341b, roughness: 0.85 });
+            const headMat = new THREE.MeshStandardMaterial({ color: 0xd1d5db, metalness: 0.45, roughness: 0.35 });
+            const arrow = new THREE.Group();
+            const shaft = new THREE.Mesh(new THREE.CylinderGeometry(0.035, 0.035, 1.2, 6), shaftMat);
+            const head = new THREE.Mesh(new THREE.ConeGeometry(0.11, 0.28, 8), headMat);
+            head.position.y = 0.72;
+            arrow.add(shaft);
+            arrow.add(head);
+            const fromPos = shipWorldPoint(fromShip, fromCrew.position).add(new THREE.Vector3(0, 0.9, 0));
+            const targetPos = shipWorldPoint(targetShip, targetCrew.position).add(new THREE.Vector3(
+                (Math.random() - 0.5) * 0.55,
+                0.65 + Math.random() * 0.35,
+                (Math.random() - 0.5) * 0.55
+            ));
+            const delta = targetPos.clone().sub(fromPos);
+            const distance = delta.length();
+            const flightTime = Math.max(24, Math.min(68, distance / 0.55));
+            const gravity = 0.012;
+            arrow.position.copy(fromPos);
+            arrow.userData = {
+                type: 'boardingArrow',
+                ownerShip: fromShip,
+                targetShip,
+                targetCrew,
+                vel: new THREE.Vector3(delta.x / flightTime, (delta.y + 0.5 * gravity * flightTime * flightTime) / flightTime, delta.z / flightTime),
+                gravity,
+                age: 0
+            };
+            scene.add(arrow);
+            boardingArrows.push(arrow);
+        }
+
+        function updateBoardingArrows() {
+            for (let i = boardingArrows.length - 1; i >= 0; i--) {
+                const arrow = boardingArrows[i];
+                const ud = arrow.userData;
+                ud.age++;
+                arrow.position.add(ud.vel);
+                ud.vel.y -= ud.gravity;
+                const dir = ud.vel.clone();
+                if (dir.lengthSq() > 0.0001) {
+                    arrow.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), dir.normalize());
+                }
+                const targetCrew = ud.targetCrew;
+                if (targetCrew && !targetCrew.userData.dead && !targetCrew.userData.overboard && targetCrew.parent && ud.targetShip && worldObjects.includes(ud.targetShip)) {
+                    const targetPos = shipWorldPoint(ud.targetShip, targetCrew.position).add(new THREE.Vector3(0, 0.65, 0));
+                    if (arrow.position.distanceTo(targetPos) < 1.25) {
+                        killShipCrewMember(ud.targetShip, targetCrew);
+                        scene.remove(arrow);
+                        boardingArrows.splice(i, 1);
+                        continue;
+                    }
+                }
+                if (arrow.position.y < 0 || ud.age > 120) {
+                    scene.remove(arrow);
+                    boardingArrows.splice(i, 1);
+                }
+            }
+        }
+
+        function damageShipWithCannon(ship, hitPos) {
+            const ud = ship.userData;
+            if (ud.sinking) return;
+            ud.hp -= 70 + Math.random() * 45;
+            ud.onFire = true;
+            ud.fireLevel = Math.min(1, (ud.fireLevel || 0) + 0.28);
+            if (Math.random() < 0.65) ud.hullLeaks = Math.min(4, (ud.hullLeaks || 0) + 1);
+            explode(hitPos, 8, 0xffaa44);
+            for (let i = 0; i < 8; i++) createFireParticle(hitPos.clone().add(new THREE.Vector3((Math.random() - 0.5) * 5, Math.random() * 3, (Math.random() - 0.5) * 5)));
+        }
+
+        function spawnOverboardCrew(ship, count) {
+            const crew = livingShipCrew(ship, true).slice(0, count);
+            crew.forEach(sailor => {
+                const side = Math.random() < 0.5 ? -1 : 1;
+                const jumpFrom = shipWorldPoint(ship, sailor.position);
+                const railOffset = new THREE.Vector3((Math.random() - 0.5) * 1.4, 0.35 + Math.random() * 0.65, side * (3.8 + Math.random() * 1.4));
+                railOffset.applyEuler(ship.rotation);
+                if (sailor.userData.sword) sailor.userData.sword.visible = false;
+
+                ship.remove(sailor);
+                sailor.position.copy(jumpFrom).add(railOffset);
+                sailor.rotation.set(
+                    -0.55 + Math.random() * 0.35,
+                    ship.rotation.y + side * (Math.PI / 2 + Math.random() * 0.4),
+                    side * (0.55 + Math.random() * 0.35)
+                );
+                Object.assign(sailor.userData, {
+                    overboard: true,
+                    vel: new THREE.Vector3((Math.random() - 0.5) * 0.18, 0.16 + Math.random() * 0.08, side * 0.14).applyEuler(ship.rotation),
+                    life: 1,
+                    swimPhase: Math.random() * Math.PI * 2
+                });
+                scene.add(sailor);
+                shipSwimmers.push(sailor);
+            });
+            ship.userData.crewCount = Math.max(0, (ship.userData.crewCount || 0) - crew.length);
+        }
+
+        function spawnShipwreckDebris(pos, force = 1) {
+            shatter(pos.clone().add(new THREE.Vector3(0, 2, 0)), 14, 0x6b3f22, force);
+            shatter(pos.clone().add(new THREE.Vector3(0, 1.2, 0)), 8, 0xc08457, force * 0.8);
+            for (let i = 0; i < 16; i++) {
+                createFireParticle(pos.clone().add(new THREE.Vector3((Math.random() - 0.5) * 12, Math.random() * 3, (Math.random() - 0.5) * 8)), i % 3 === 0);
+            }
+        }
+
+        function spawnWhirlpool(pos, radius = 24, life = 900) {
+            const group = new THREE.Group();
+            const waterMat = new THREE.MeshBasicMaterial({ color: 0x38bdf8, transparent: true, opacity: 0.42, side: THREE.DoubleSide });
+            const darkMat = new THREE.MeshBasicMaterial({ color: 0x082f49, transparent: true, opacity: 0.5, side: THREE.DoubleSide });
+            const rings = [];
+            for (let i = 0; i < 5; i++) {
+                const ring = new THREE.Mesh(new THREE.TorusGeometry(radius * (0.18 + i * 0.14), 0.18 + i * 0.04, 8, 64), i % 2 ? waterMat : darkMat);
+                ring.rotation.x = -Math.PI / 2;
+                ring.position.y = 0.06 + i * 0.012;
+                group.add(ring);
+                rings.push(ring);
+            }
+            const funnel = new THREE.Mesh(
+                new THREE.ConeGeometry(radius * 0.42, 2.6, 48, 1, true),
+                new THREE.MeshBasicMaterial({ color: 0x0ea5e9, transparent: true, opacity: 0.22, side: THREE.DoubleSide })
+            );
+            funnel.rotation.x = Math.PI;
+            funnel.position.y = -1.1;
+            group.add(funnel);
+            group.position.set(pos.x, 0.08, pos.z);
+            scene.add(group);
+            whirlpools.push({ group, point: pos.clone(), radius, life, age: 0, rings, funnel });
+            return group;
+        }
+
+        function updateWhirlpools() {
+            for (let i = whirlpools.length - 1; i >= 0; i--) {
+                const w = whirlpools[i];
+                w.age++;
+                w.group.rotation.y += 0.04;
+                w.rings.forEach((ring, idx) => {
+                    ring.rotation.z += 0.035 + idx * 0.01;
+                    ring.scale.setScalar(1 + Math.sin(w.age * 0.08 + idx) * 0.035);
+                    ring.material.opacity = Math.max(0, (idx % 2 ? 0.42 : 0.5) * (1 - Math.max(0, w.age - w.life * 0.75) / (w.life * 0.25)));
+                });
+                w.funnel.rotation.y -= 0.07;
+                if (w.age > w.life) {
+                    scene.remove(w.group);
+                    whirlpools.splice(i, 1);
+                }
+            }
+        }
+
+        function pullShipTowardWhirlpools(ship) {
+            const ud = ship.userData;
+            for (const w of whirlpools) {
+                const dx = w.point.x - ship.position.x;
+                const dz = w.point.z - ship.position.z;
+                const d = Math.sqrt(dx * dx + dz * dz);
+                if (d > w.radius * 2.4) continue;
+                const pull = Math.pow(1 - Math.min(1, d / (w.radius * 2.4)), 1.5);
+                const dir = new THREE.Vector3(dx, 0, dz).normalize();
+                const tangent = new THREE.Vector3(-dir.z, 0, dir.x);
+                ship.position.add(dir.multiplyScalar(0.035 + pull * 0.42));
+                ship.position.add(tangent.multiplyScalar(pull * 0.16));
+                ship.rotation.y += 0.012 + pull * 0.04;
+                ship.rotation.z += Math.sin(ud.lifeTime * 0.12) * pull * 0.01;
+                if (d < w.radius * 0.72) {
+                    ud.hp -= 0.55 + pull * 1.6;
+                    ud.hullLeaks = Math.min(5, (ud.hullLeaks || 0) + 0.012);
+                    if (Math.random() < 0.12) createFireParticle(ship.position.clone().add(new THREE.Vector3((Math.random() - 0.5) * 8, 1, (Math.random() - 0.5) * 5)), true);
+                }
+                if (d < w.radius * 0.28 && !ud.sinking) {
+                    ud.sinking = true;
+                    ud.sinkReason = 'whirlpool';
+                    spawnOverboardCrew(ship, ud.crewCount || 6);
+                    showMessage('A whirlpool drags a ship under');
+                }
+            }
+        }
+
+        function sinkShip(ship, reason) {
+            const ud = ship.userData;
+            if (ud.sinking) return;
+            ud.sinking = true;
+            ud.sinkReason = reason;
+            ud.hullLeaks = Math.max(ud.hullLeaks || 0, 4);
+            ud.waterLevel = Math.max(ud.waterLevel || 0, 1.05);
+            spawnOverboardCrew(ship, ud.crewCount || 6);
+        }
+
+        function checkShipIslandCollision(ship) {
+            if (ship.userData.sinking) return;
+            for (const island of worldObjects) {
+                if (island.userData.type !== 'island' || island.userData.hp <= 0) continue;
+                const safeDist = (island.userData.footprint || 18) * 0.5 + 7.5;
+                const dx = ship.position.x - island.position.x;
+                const dz = ship.position.z - island.position.z;
+                const d = Math.sqrt(dx * dx + dz * dz);
+                if (d < safeDist) {
+                    const impact = ship.position.clone().lerp(island.position, 0.45);
+                    ship.userData.hp = 0;
+                    island.userData.hp -= 120;
+                    spawnShipwreckDebris(impact, 1.15);
+                    spawnWhirlpool(impact, 24 + Math.random() * 8, 950);
+                    sinkShip(ship, 'island');
+                    showMessage('Ship ran aground: hull split open and a whirlpool forms');
+                    return;
+                }
+            }
+        }
+
+        function animateBucketCrew(ship) {
+            const ud = ship.userData;
+            if (!ud.crew) return;
+            const active = ud.onFire && (ud.fireLevel || 0) > 0;
+            ud.crew.forEach((crew, idx) => {
+                if (crew.userData.role !== 'bucket') return;
+                const phase = ud.lifeTime * 0.055 + idx * 1.35;
+                if (active) {
+                    const lane = idx / Math.max(1, 3);
+                    const path = (Math.sin(phase) + 1) * 0.5;
+                    crew.position.x = -6.1 + path * 9.8;
+                    crew.position.z = -1.55 + lane * 1.05 + Math.sin(phase * 2) * 0.18;
+                    crew.position.y = 4.2 + Math.abs(Math.sin(phase * 2.2)) * 0.08;
+                    crew.rotation.y = Math.sin(phase) > 0 ? Math.PI / 2 : -Math.PI / 2;
+                    crew.rotation.z = Math.sin(phase * 2.4) * 0.16;
+                    if (crew.userData.bucket) {
+                        crew.userData.bucket.rotation.z = -0.4 + Math.sin(phase * 2.2) * 0.45;
+                        crew.userData.bucket.position.y = 0.34 + Math.max(0, Math.sin(phase * 2.2)) * 0.18;
+                    }
+                } else {
+                    const homeX = -5.5 + idx * 1.5;
+                    const homeZ = -1.2 + idx * 0.8;
+                    crew.position.x += (homeX - crew.position.x) * 0.04;
+                    crew.position.z += (homeZ - crew.position.z) * 0.04;
+                    crew.position.y += (4.2 - crew.position.y) * 0.08;
+                    crew.rotation.z *= 0.9;
+                }
+            });
+        }
+
+        function shipPairKey(a, b) {
+            const ai = worldObjects.indexOf(a);
+            const bi = worldObjects.indexOf(b);
+            return ai < bi ? `${ai}:${bi}` : `${bi}:${ai}`;
+        }
+
+        function findBoardingAction(a, b) {
+            const key = shipPairKey(a, b);
+            return boardingActions.find(action => action.key === key);
+        }
+
+        function startBoardingAction(a, b) {
+            if (findBoardingAction(a, b)) return;
+            a.userData.boardingLock = b;
+            b.userData.boardingLock = a;
+            boardingActions.push({ key: shipPairKey(a, b), a, b, age: 0, arrowTimer: 0 });
+            showMessage('Ships in boarding range: crews loose arrows');
+        }
+
+        function updateBoardingActions() {
+            for (let i = boardingActions.length - 1; i >= 0; i--) {
+                const action = boardingActions[i];
+                const { a, b } = action;
+                const invalid = !worldObjects.includes(a) || !worldObjects.includes(b) || a.userData.sinking || b.userData.sinking || a.userData.hp <= 0 || b.userData.hp <= 0;
+                const dist = invalid ? Infinity : a.position.distanceTo(b.position);
+                const aCrew = invalid ? [] : livingShipCrew(a);
+                const bCrew = invalid ? [] : livingShipCrew(b);
+                if (invalid || dist > 40 || action.age > 850 || aCrew.length === 0 || bCrew.length === 0) {
+                    if (a.userData.boardingLock === b) a.userData.boardingLock = null;
+                    if (b.userData.boardingLock === a) b.userData.boardingLock = null;
+                    if (a.userData.crew) a.userData.crew.forEach(c => { if (c.userData.sword) c.userData.sword.visible = false; });
+                    if (b.userData.crew) b.userData.crew.forEach(c => { if (c.userData.sword) c.userData.sword.visible = false; });
+                    if (!invalid && (aCrew.length === 0 || bCrew.length === 0)) {
+                        const loser = aCrew.length === 0 ? a : b;
+                        loser.userData.fleeing = true;
+                        loser.userData.hp -= 45;
+                        showMessage('Arrow volley wiped out a ship crew');
+                    }
+                    boardingActions.splice(i, 1);
+                    continue;
+                }
+
+                action.age++;
+                action.arrowTimer++;
+
+                [a, b].forEach((ship, shipIdx) => {
+                    const targetShip = shipIdx === 0 ? b : a;
+                    const ud = ship.userData;
+                    if (!ud.crew) return;
+                    const targetLocal = ship.worldToLocal(targetShip.position.clone());
+                    const railSide = targetLocal.z >= 0 ? 1 : -1;
+                    const archers = livingShipCrew(ship, false);
+                    archers.forEach((crew, idx) => {
+                        const phase = action.age * 0.16 + idx * 1.7 + shipIdx;
+                        const row = idx % 2;
+                        crew.position.x = -2.4 + idx * 1.45;
+                        crew.position.z = railSide * (2.15 - row * 0.42);
+                        crew.position.y = 4.24 + Math.abs(Math.sin(phase)) * 0.04;
+                        const faceDir = targetShip.position.clone().sub(shipWorldPoint(ship, crew.position));
+                        crew.rotation.y = Math.atan2(faceDir.x, faceDir.z) - ship.rotation.y;
+                        crew.rotation.z = Math.sin(phase * 3.2) * 0.12;
+                        if (crew.userData.sword) {
+                            crew.userData.sword.visible = false;
+                        }
+                    });
+                });
+
+                if (action.arrowTimer > 18) {
+                    action.arrowTimer = 0;
+                    [[a, b], [b, a]].forEach(([fromShip, targetShip]) => {
+                        const archers = livingShipCrew(fromShip, false);
+                        const targets = livingShipCrew(targetShip);
+                        if (archers.length === 0 || targets.length === 0) return;
+                        const archer = archers[Math.floor(Math.random() * archers.length)];
+                        const targetCrew = targets[Math.floor(Math.random() * targets.length)];
+                        spawnBoardingArrow(fromShip, archer, targetShip, targetCrew);
+                    });
+                }
+            }
+        }
+
+        function maybeStartBoarding(ship) {
+            if (ship.userData.fleeing || ship.userData.boardingLock || ship.userData.sinking) return;
+            const target = findShipTarget(ship);
+            if (!target || target.userData.fleeing || target.userData.boardingLock) return;
+            const d = ship.position.distanceTo(target.position);
+            if (d < 23) startBoardingAction(ship, target);
+        }
+
+        function clearShipHazards() {
+            whirlpools.forEach(w => scene.remove(w.group));
+            whirlpools = [];
+            boardingActions.forEach(action => {
+                if (action.a?.userData.boardingLock === action.b) action.a.userData.boardingLock = null;
+                if (action.b?.userData.boardingLock === action.a) action.b.userData.boardingLock = null;
+            });
+            boardingActions = [];
+            boardingArrows.forEach(arrow => scene.remove(arrow));
+            boardingArrows = [];
+        }
+
         function despawnVolcano(v) {
             scene.remove(v.mesh);
             v.mesh.traverse(c => {
@@ -4977,9 +5626,94 @@ let scene, camera, renderer, controls, raycaster, mouse, ground, grid;
 
         // ===== RIVERS =====
         let rivers = []; // array of meshes
+        let oceanGroup = null;
         let isDrawingRiver = false;
         let riverPath = []; // array of THREE.Vector3 points
         let riverPreview = null;
+
+        function clearOcean() {
+            if (!oceanGroup) return;
+            scene.remove(oceanGroup);
+            oceanGroup.traverse(child => {
+                if (child.isMesh) {
+                    if (child.geometry) child.geometry.dispose();
+                    if (child.material) {
+                        if (Array.isArray(child.material)) child.material.forEach(m => m.dispose());
+                        else child.material.dispose();
+                    }
+                }
+            });
+            oceanGroup = null;
+            setOceanVisible(false);
+        }
+
+        function setOceanVisible(active) {
+            if (oceanGroup) oceanGroup.visible = active;
+            if (ground && ground.material) ground.material.color.setHex(active ? 0x082f49 : 0x1e293b);
+            if (grid) grid.visible = !active;
+        }
+
+        function createOceanWorldSurface() {
+            clearOcean();
+            const group = new THREE.Group();
+            const waterGeo = new THREE.PlaneGeometry(900, 900, 80, 80);
+            const waterMat = new THREE.MeshStandardMaterial({
+                color: 0x0e7490,
+                emissive: 0x083344,
+                emissiveIntensity: 0.28,
+                roughness: 0.28,
+                metalness: 0.35,
+                transparent: true,
+                opacity: 0.88,
+                side: THREE.DoubleSide
+            });
+            const water = new THREE.Mesh(waterGeo, waterMat);
+            water.rotation.x = -Math.PI / 2;
+            water.position.y = 0.12;
+            water.receiveShadow = true;
+            water.userData.basePositions = waterGeo.attributes.position.array.slice();
+            group.add(water);
+
+            for (let i = 0; i < 44; i++) {
+                const foam = new THREE.Mesh(
+                    new THREE.PlaneGeometry(6 + Math.random() * 15, 0.35 + Math.random() * 0.7),
+                    new THREE.MeshBasicMaterial({ color: 0xe0f2fe, transparent: true, opacity: 0.35 + Math.random() * 0.25, side: THREE.DoubleSide })
+                );
+                foam.rotation.x = -Math.PI / 2;
+                const a = Math.random() * Math.PI * 2;
+                const r = 20 + Math.random() * 210;
+                foam.position.set(Math.cos(a) * r, 0.2, Math.sin(a) * r);
+                foam.rotation.z = Math.random() * Math.PI * 2;
+                foam.userData.drift = 0.03 + Math.random() * 0.08;
+                group.add(foam);
+            }
+            oceanGroup = group;
+            scene.add(oceanGroup);
+            setOceanVisible(true);
+        }
+
+        function animateOcean() {
+            if (!oceanGroup || !oceanGroup.visible) return;
+            const water = oceanGroup.children[0];
+            if (water && water.geometry && water.userData.basePositions) {
+                const pos = water.geometry.attributes.position;
+                const base = water.userData.basePositions;
+                const t = performance.now() * 0.001;
+                for (let i = 0; i < pos.count; i++) {
+                    const x = base[i * 3];
+                    const y = base[i * 3 + 1];
+                    pos.setZ(i, Math.sin(x * 0.045 + t * 1.4) * 0.7 + Math.cos(y * 0.035 + t * 1.1) * 0.45);
+                }
+                pos.needsUpdate = true;
+                water.geometry.computeVertexNormals();
+            }
+            for (let i = 1; i < oceanGroup.children.length; i++) {
+                const foam = oceanGroup.children[i];
+                foam.position.x += Math.cos(foam.rotation.z) * foam.userData.drift;
+                foam.position.z += Math.sin(foam.rotation.z) * foam.userData.drift;
+                if (foam.position.length() > 230) foam.position.multiplyScalar(-0.85);
+            }
+        }
 
         function buildRiverFromPath(path) {
             if (path.length < 2) return null;
@@ -5067,6 +5801,14 @@ let scene, camera, renderer, controls, raycaster, mouse, ground, grid;
                 r.material.dispose();
             });
             rivers = [];
+            isDrawingRiver = false;
+            riverPath = [];
+            if (riverPreview) {
+                scene.remove(riverPreview);
+                if (riverPreview.geometry) riverPreview.geometry.dispose();
+                if (riverPreview.material) riverPreview.material.dispose();
+                riverPreview = null;
+            }
         }
 
         // ===== TERRAIN GENERATOR =====
@@ -5079,6 +5821,11 @@ let scene, camera, renderer, controls, raycaster, mouse, ground, grid;
             debris = [];
             fireParticles.forEach(f => scene.remove(f));
             fireParticles = [];
+            shipSwimmers.forEach(s => scene.remove(s));
+            shipSwimmers = [];
+            clearShipHazards();
+            cannonBalls.forEach(b => scene.remove(b));
+            cannonBalls = [];
             lavaBombs.forEach(b => scene.remove(b));
             lavaBombs = [];
             crossbowBolts.forEach(b => scene.remove(b));
@@ -5097,6 +5844,7 @@ let scene, camera, renderer, controls, raycaster, mouse, ground, grid;
             despawnAllVolcanoes();
             despawnAllCyclopses();
             clearRivers();
+            clearOcean();
             singularityPoint = null;
 
             // Layout: village center at origin, houses arranged in concentric rings
@@ -5204,6 +5952,11 @@ let scene, camera, renderer, controls, raycaster, mouse, ground, grid;
             debris = [];
             fireParticles.forEach(f => scene.remove(f));
             fireParticles = [];
+            shipSwimmers.forEach(s => scene.remove(s));
+            shipSwimmers = [];
+            clearShipHazards();
+            cannonBalls.forEach(b => scene.remove(b));
+            cannonBalls = [];
             lavaBombs.forEach(b => scene.remove(b));
             lavaBombs = [];
             crossbowBolts.forEach(b => scene.remove(b));
@@ -5222,9 +5975,10 @@ let scene, camera, renderer, controls, raycaster, mouse, ground, grid;
             despawnAllVolcanoes();
             despawnAllCyclopses();
             clearRivers();
+            clearOcean();
             singularityPoint = null;
 
-            // Maybe generate a river (50% chance)
+            // Random terrain always gets trees, and can roll a river and mountain layout.
             const hasRiver = Math.random() < 0.5;
             let riverPathGen = null;
             if (hasRiver) {
@@ -5383,11 +6137,74 @@ let scene, camera, renderer, controls, raycaster, mouse, ground, grid;
             }
 
             const features = [];
+            features.push(placed + ' Trees');
             if (hasRiver) features.push('River');
             if (mountainCount > 0) features.push(mountainCount + ' Mountains');
             features.push(animalsPlaced + ' Animals');
             spawnGrass();
-            showMessage(features.length ? `Generated · ${features.join(' · ')}` : 'Terrain Generated');
+            showMessage(`Random terrain · ${features.join(' · ')}`);
+        }
+
+        function generateOceanWorld() {
+            worldObjects.forEach(o => scene.remove(o));
+            worldObjects = [];
+            debris.forEach(d => scene.remove(d));
+            debris = [];
+            fireParticles.forEach(f => scene.remove(f));
+            fireParticles = [];
+            shipSwimmers.forEach(s => scene.remove(s));
+            shipSwimmers = [];
+            clearShipHazards();
+            cannonBalls.forEach(b => scene.remove(b));
+            cannonBalls = [];
+            lavaBombs.forEach(b => scene.remove(b));
+            lavaBombs = [];
+            crossbowBolts.forEach(b => scene.remove(b));
+            crossbowBolts = [];
+            lavaStreams.forEach(ls => {
+                if (ls.pool) scene.remove(ls.pool);
+                if (ls.stream) scene.remove(ls.stream);
+                if (ls.glow) scene.remove(ls.glow);
+                if (ls.drops) ls.drops.forEach(d => scene.remove(d));
+            });
+            lavaStreams = [];
+            cooledLavaPools.forEach(p => { scene.remove(p); if (p.geometry) p.geometry.dispose(); if (p.material) p.material.dispose(); });
+            cooledLavaPools = [];
+            despawnAllTornadoes();
+            despawnAllTsunamis();
+            despawnAllVolcanoes();
+            despawnAllCyclopses();
+            clearRivers();
+            createOceanWorldSurface();
+            clearGrass();
+            singularityPoint = null;
+
+            const islandCount = 3 + Math.floor(Math.random() * 3);
+            const placed = [];
+            for (let i = 0; i < islandCount; i++) {
+                let pos = null;
+                let attempts = 0;
+                while (attempts++ < 40 && !pos) {
+                    const angle = Math.random() * Math.PI * 2;
+                    const dist = 18 + Math.random() * (WORLD_SIZE - 35);
+                    const candidate = new THREE.Vector3(Math.cos(angle) * dist, 0, Math.sin(angle) * dist);
+                    const tooClose = placed.some(p => p.distanceTo(candidate) < 34);
+                    if (!tooClose) pos = candidate;
+                }
+                if (!pos) continue;
+                placed.push(pos.clone());
+                placeObject('island', pos);
+            }
+            if (Math.random() < 0.65) {
+                for (let i = 0; i < 2; i++) {
+                    const angle = Math.random() * Math.PI * 2;
+                    const dist = 75 + Math.random() * 45;
+                    const pos = new THREE.Vector3(Math.cos(angle) * dist, 0, Math.sin(angle) * dist);
+                    placeObject('ship', pos);
+                }
+            }
+            camera.position.set(155, 95, 155);
+            showMessage(`Ocean generated: ${placed.length} islands`);
         }
 
         function igniteRadius(center, radius, includeFallen = false) {
@@ -6584,6 +7401,7 @@ let scene, camera, renderer, controls, raycaster, mouse, ground, grid;
             }
 
             updateDayNight();
+            animateOcean();
             // Survival mode: drive player + camera here so it's in sync with the rest of the sim
             if (gameMode === 'survival' && survivalActive) updateSurvival();
             updateOctopuses();
@@ -7114,6 +7932,40 @@ let scene, camera, renderer, controls, raycaster, mouse, ground, grid;
                     ls.pool.material.emissiveIntensity = 0;
                     cooledLavaPools.push(ls.pool); // tracked so reset can clear it
                     lavaStreams.splice(si, 1);
+                }
+            }
+
+            // Cannonballs from wooden ships
+            for (let i = cannonBalls.length - 1; i >= 0; i--) {
+                const b = cannonBalls[i];
+                b.userData.age++;
+                b.position.add(b.userData.vel);
+                b.userData.vel.y -= b.userData.gravity;
+                let hitShip = null;
+                for (const ship of worldObjects) {
+                    if (ship === b.userData.ownerShip) continue;
+                    if (ship.userData.type !== 'ship') continue;
+                    if (ship.userData.sinking || ship.userData.hp <= 0) continue;
+                    const dx = b.position.x - ship.position.x;
+                    const dz = b.position.z - ship.position.z;
+                    const d = Math.sqrt(dx * dx + dz * dz);
+                    if (d < 8.5 && b.position.y < 7.5) {
+                        hitShip = ship;
+                        break;
+                    }
+                }
+                if (hitShip) {
+                    damageShipWithCannon(hitShip, b.position.clone());
+                    scene.remove(b);
+                    cannonBalls.splice(i, 1);
+                    continue;
+                }
+                if (b.position.y <= 0.25 || b.userData.age > 180) {
+                    if (b.position.y <= 0.25) {
+                        for (let s = 0; s < 5; s++) createFireParticle(b.position.clone().add(new THREE.Vector3((Math.random() - 0.5) * 3, 0.2, (Math.random() - 0.5) * 3)), true);
+                    }
+                    scene.remove(b);
+                    cannonBalls.splice(i, 1);
                 }
             }
 
@@ -7685,6 +8537,29 @@ let scene, camera, renderer, controls, raycaster, mouse, ground, grid;
                 if (p.userData.life <= 0) { scene.remove(p); fireParticles.splice(i,1); }
             }
 
+            for (let i = shipSwimmers.length - 1; i >= 0; i--) {
+                const s = shipSwimmers[i];
+                const ud = s.userData;
+                ud.life -= 0.0016;
+                ud.swimPhase += 0.12;
+                s.position.add(ud.vel);
+                ud.vel.y -= 0.012;
+                if (s.position.y < 0.45) {
+                    s.position.y = 0.45 + Math.sin(ud.swimPhase) * 0.12;
+                    ud.vel.y = 0;
+                    ud.vel.multiplyScalar(0.985);
+                }
+                s.rotation.z = Math.sin(ud.swimPhase) * 0.28;
+                if (ud.life <= 0) {
+                    scene.remove(s);
+                    shipSwimmers.splice(i, 1);
+                }
+            }
+
+            updateWhirlpools();
+            updateBoardingActions();
+            updateBoardingArrows();
+
             for(let i=worldObjects.length-1; i>=0; i--) {
                 const o = worldObjects[i];
                 const ud = o.userData;
@@ -7756,6 +8631,107 @@ let scene, camera, renderer, controls, raycaster, mouse, ground, grid;
                     const back = o.position.clone().normalize().multiplyScalar(-3);
                     ud.velocity.add(back);
                     if (distFromCenter > WORLD_SIZE + 40) ud.hp = 0;
+                }
+
+                // --- 1930s WOODEN SHIPS: sail, fire cannons, fight fires, sink through hull leaks ---
+                if (ud.type === 'ship') {
+                    const forward = new THREE.Vector3(Math.sin(o.rotation.y), 0, Math.cos(o.rotation.y));
+                    if (!ud.sinking) {
+                        const damageRatio = ud.maxHp ? ud.hp / ud.maxHp : 1;
+                        ud.fleeing = damageRatio < 0.38 || ud.fleeing && damageRatio < 0.58;
+                        const targetShip = findShipTarget(o);
+                        if (ud.fleeing && targetShip) {
+                            const away = new THREE.Vector3().subVectors(o.position, targetShip.position);
+                            if (away.lengthSq() > 0.01) {
+                                const desired = Math.atan2(away.x, away.z);
+                                let delta = desired - o.rotation.y;
+                                delta = Math.atan2(Math.sin(delta), Math.cos(delta));
+                                o.rotation.y += Math.max(-0.026, Math.min(0.026, delta));
+                            }
+                            ud.rudder = (ud.rudder || 0) * 0.95;
+                        }
+                        const sailSpeed = (ud.speed || 0.05) * (ud.fleeing ? 1.65 : 1);
+                        o.position.add(forward.multiplyScalar(sailSpeed));
+                        pullShipTowardWhirlpools(o);
+                        checkShipIslandCollision(o);
+                        if (ud.sinking) continue;
+                        o.rotation.y += ud.rudder || 0;
+                        o.position.y = 0.2 + Math.sin(ud.lifeTime * 0.04 + o.position.x * 0.02) * 0.25;
+                        o.rotation.z = Math.sin(ud.lifeTime * 0.035 + o.position.z * 0.03) * 0.04;
+                        o.rotation.x = Math.cos(ud.lifeTime * 0.03) * 0.025;
+
+                        const shipDist = Math.sqrt(o.position.x ** 2 + o.position.z ** 2);
+                        if (shipDist > WORLD_SIZE - 18) {
+                            o.rotation.y += 0.035;
+                            ud.rudder = 0.01;
+                        }
+
+                        ud.shootCooldown = Math.max(0, (ud.shootCooldown || 0) - 1);
+                        if (targetShip && !ud.fleeing && !ud.boardingLock) {
+                            const toTarget = new THREE.Vector3().subVectors(targetShip.position, o.position);
+                            o.rotation.y += Math.max(-0.01, Math.min(0.01, Math.atan2(toTarget.x, toTarget.z) - o.rotation.y));
+                            if (ud.shootCooldown <= 0) {
+                                const side = Math.random() < 0.5 ? -1 : 1;
+                                const cannon = ud.cannons.find(c => c.userData.side === side) || ud.cannons[0];
+                                const muzzle = shipWorldPoint(o, cannon.position.clone().add(new THREE.Vector3(0, 0, side * 1.0)));
+                                spawnCannonBall(muzzle, targetShip, o);
+                                for (let s = 0; s < 4; s++) createFireParticle(muzzle.clone().add(new THREE.Vector3((Math.random() - 0.5), 0, (Math.random() - 0.5))), true);
+                                ud.shootCooldown = 95 + Math.random() * 90;
+                            }
+                        }
+                        maybeStartBoarding(o);
+
+                        if (ud.onFire) {
+                            ud.fireLevel = Math.min(1, (ud.fireLevel || 0) + 0.0018);
+                            ud.hp -= 0.12 + ud.fireLevel * 0.22;
+                            if (Math.random() < 0.55) {
+                                createFireParticle(o.position.clone().add(new THREE.Vector3((Math.random() - 0.5) * 10, 4 + Math.random() * 4, (Math.random() - 0.5) * 4)));
+                            }
+                            ud.bucketTimer = (ud.bucketTimer || 0) + 1;
+                            animateBucketCrew(o);
+                            if (ud.bucketTimer > 24 && ud.crew && ud.crew.length > 0) {
+                                ud.bucketTimer = 0;
+                                ud.fireLevel = Math.max(0, ud.fireLevel - 0.055);
+                                ud.hp = Math.min(ud.maxHp, ud.hp + 1.3);
+                                const spray = new THREE.Mesh(
+                                    new THREE.SphereGeometry(0.45, 6, 5),
+                                    new THREE.MeshBasicMaterial({ color: 0xbae6fd, transparent: true, opacity: 0.75 })
+                                );
+                                spray.position.copy(o.position).add(new THREE.Vector3((Math.random() - 0.5) * 7, 5, (Math.random() - 0.5) * 3));
+                                spray.userData = { vel: new THREE.Vector3((Math.random() - 0.5) * 0.1, 0.15, (Math.random() - 0.5) * 0.1), life: 0.7, gravity: true };
+                                scene.add(spray);
+                                fireParticles.push(spray);
+                                if (ud.fireLevel <= 0.03) {
+                                    ud.onFire = false;
+                                    ud.fireLevel = 0;
+                                }
+                            }
+                        } else {
+                            animateBucketCrew(o);
+                        }
+
+                        if ((ud.hullLeaks || 0) > 0) {
+                            ud.waterLevel += 0.0025 * ud.hullLeaks;
+                            if (ud.waterLevel > 1 || ud.hp <= 0) {
+                                sinkShip(o, 'leaks');
+                                showMessage('Ship holed below the waterline: crew overboard');
+                            }
+                        } else if (ud.hp <= 0) {
+                            sinkShip(o, 'battle');
+                            showMessage('Ship critically damaged: crew abandons ship');
+                        }
+                    } else {
+                        ud.sinkTimer++;
+                        o.position.y -= 0.035 + ud.sinkTimer * 0.0004;
+                        o.rotation.z += 0.004;
+                        o.rotation.x += 0.002;
+                        if (Math.random() < 0.25) createFireParticle(o.position.clone().add(new THREE.Vector3((Math.random() - 0.5) * 8, 2, (Math.random() - 0.5) * 5)), true);
+                        if (o.position.y < -9) {
+                            scene.remove(o);
+                            worldObjects.splice(i, 1);
+                        }
+                    }
+                    continue;
                 }
 
                 // --- HUMAN AI: wander near home, occasionally go inside ---
@@ -8788,6 +9764,9 @@ let scene, camera, renderer, controls, raycaster, mouse, ground, grid;
                             shatter(o.position, 10, 0x94a3b8, 0.8);
                         } else if (ud.type === 'tree') {
                             shatter(o.position, 8, 0x78350f, 0.6);
+                        } else if (ud.type === 'island') {
+                            shatter(o.position, 18, 0xd6b36a, 1.0);
+                            shatter(o.position, 10, 0x166534, 0.8);
                         } else if (ud.type === 'road') {
                             shatter(o.position, 6, 0x334155, 0.4);
                         }
@@ -8801,8 +9780,8 @@ let scene, camera, renderer, controls, raycaster, mouse, ground, grid;
         }
 
         function setupUI() {
-            const buildIds = ['house', 'skyscraper', 'tree', 'human', 'builder', 'invader', 'animal', 'river', 'mountain', 'eraser'];
-            const destroyIds = ['fire', 'vortex', 'quake', 'tsunami', 'volcano', 'lavaflood', 'napalm', 'cluster', 'nuke', 'blackhole', 'meteor', 'cracker', 'monarch', 'battleship', 'mothership', 'leviathan', 'kraken', 'maw'];
+            const buildIds = ['house', 'skyscraper', 'tree', 'human', 'builder', 'invader', 'animal', 'river', 'island', 'ship', 'mountain', 'eraser'];
+            const destroyIds = ['fire', 'vortex', 'whirlpool', 'quake', 'tsunami', 'volcano', 'lavaflood', 'napalm', 'cluster', 'nuke', 'blackhole', 'meteor', 'cracker', 'monarch', 'battleship', 'mothership', 'leviathan', 'kraken', 'maw'];
             const ids = [...buildIds, ...destroyIds];
 
             const selectTool = (id, el) => {
@@ -8819,6 +9798,9 @@ let scene, camera, renderer, controls, raycaster, mouse, ground, grid;
                 const label = el.querySelector('span:not(.icon)')?.innerText || id;
                 let hint = '';
                 if (id === 'river') hint = ' · click and drag to draw';
+                if (id === 'island') hint = ' · places a unique tree island';
+                if (id === 'ship') hint = ' · fires cannons at nearby ships';
+                if (id === 'whirlpool') hint = ' · drags ships underwater';
                 if (id === 'volcano') hint = ' · tap to erupt';
                 if (id === 'builder') hint = ' · cuts trees and builds houses';
                 if (id === 'eraser') hint = ' · tap an object to erase';
@@ -8885,13 +9867,24 @@ let scene, camera, renderer, controls, raycaster, mouse, ground, grid;
                 };
             });
 
-            // Collapse/expand toolbar
+            // Collapse/expand the build/destruction toolbar.
             const handle = document.getElementById('handle');
-            handle.onclick = () => toolbar.classList.toggle('hidden');
-            document.getElementById('btn-toggle').onclick = () => toolbar.classList.toggle('hidden');
+            const toggleUiBtn = document.getElementById('btn-toggle');
+            const setToolbarOpen = (isOpen) => {
+                toolbar.classList.toggle('hidden', !isOpen);
+                toggleUiBtn.setAttribute('aria-pressed', isOpen ? 'true' : 'false');
+                toggleUiBtn.setAttribute('aria-label', isOpen ? 'Close build and destruction' : 'Open build and destruction');
+                toggleUiBtn.title = isOpen ? 'Close build and destruction' : 'Open build and destruction';
+            };
+            setToolbarOpen(!toolbar.classList.contains('hidden'));
+            handle.onclick = () => setToolbarOpen(toolbar.classList.contains('hidden'));
+            toggleUiBtn.onclick = () => setToolbarOpen(toolbar.classList.contains('hidden'));
 
             // Generate Terrain
             document.getElementById('btn-generate').onclick = () => generateTerrain();
+
+            // Ocean terrain: clears the world and creates water with placeable-style islands
+            document.getElementById('btn-ocean').onclick = () => generateOceanWorld();
 
             // Random village: clears the world and builds a generic village
             document.getElementById('btn-village').onclick = () => generateRandomVillage();
@@ -8936,6 +9929,11 @@ let scene, camera, renderer, controls, raycaster, mouse, ground, grid;
                 debris = [];
                 fireParticles.forEach(f => scene.remove(f));
                 fireParticles = [];
+                shipSwimmers.forEach(s => scene.remove(s));
+                shipSwimmers = [];
+                clearShipHazards();
+                cannonBalls.forEach(b => scene.remove(b));
+                cannonBalls = [];
                 lavaBombs.forEach(b => scene.remove(b));
                 lavaBombs = [];
                 crossbowBolts.forEach(b => scene.remove(b));
@@ -8980,13 +9978,12 @@ let scene, camera, renderer, controls, raycaster, mouse, ground, grid;
                 despawnAllVolcanoes();
                 despawnAllCyclopses();
                 clearRivers();
-                // Keep grass — just re-spawn fresh to remove any burn marks
+                clearOcean();
                 clearGrass();
-                spawnGrass();
                 singularityPoint = null;
                 residentSpawnTimer = 0;
                 clearMultiTargets();
-                showMessage("Simulation Reset");
+                showMessage("Everything cleared");
             };
 
             // Escape key cancels multi-selection
@@ -9061,6 +10058,10 @@ let scene, camera, renderer, controls, raycaster, mouse, ground, grid;
             debris = [];
             fireParticles.forEach(f => scene.remove(f));
             fireParticles = [];
+            shipSwimmers.forEach(s => scene.remove(s));
+            shipSwimmers = [];
+            clearShipHazards();
+            if (typeof cannonBalls !== 'undefined') { cannonBalls.forEach(b => scene.remove(b)); cannonBalls = []; }
             lavaBombs.forEach(b => scene.remove(b));
             lavaBombs = [];
             if (typeof crossbowBolts !== 'undefined') { crossbowBolts.forEach(b => scene.remove(b)); crossbowBolts = []; }
@@ -9096,6 +10097,7 @@ let scene, camera, renderer, controls, raycaster, mouse, ground, grid;
             despawnAllVolcanoes();
             if (typeof despawnAllCyclopses === 'function') despawnAllCyclopses();
             clearRivers();
+            clearOcean();
             clearGrass();
             spawnGrass();
             singularityPoint = null;

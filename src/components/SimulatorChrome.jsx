@@ -7,6 +7,8 @@ const buildTools = [
   ["btn-invader", "btn-red", "🏹", "Invader"],
   ["btn-animal", "btn-green", "🦌", "Animal"],
   ["btn-river", "btn-blue", "🏞️", "River"],
+  ["btn-island", "btn-green", "🏝️", "Island"],
+  ["btn-ship", "btn-orange", "⛵", "1930s Ship"],
   ["btn-mountain", "btn-gray", "⛰️", "Mountain"],
   ["btn-eraser", "btn-gray", "🧹", "Eraser"],
 ];
@@ -14,6 +16,7 @@ const buildTools = [
 const destroyTools = [
   ["btn-fire", "🔥", "Fire"],
   ["btn-vortex", "🌪️", "Tornado"],
+  ["btn-whirlpool", "🌀", "Whirlpool"],
   ["btn-quake", "🫨", "Quake"],
   ["btn-tsunami", "🌊", "Tsunami"],
   ["btn-volcano", "🌋", "Volcano"],
@@ -43,7 +46,7 @@ function ToolButton({ id, className, icon, label }) {
 
 function HeaderButton({ id, icon, label, className = "" }) {
   return (
-    <button id={id} className={`header-btn ${className}`} aria-label={label}>
+    <button id={id} className={`header-btn ${className}`} title={label} aria-label={label}>
       <span className="icon">{icon}</span>
       <span className="btn-label">{label}</span>
     </button>
@@ -60,7 +63,8 @@ export function SimulatorChrome() {
         </div>
         <div id="header-actions">
           <HeaderButton id="btn-generate" icon="🌱" label="Generate" />
-          <HeaderButton id="btn-village" icon="🏘️" label="Village" />
+          <HeaderButton id="btn-ocean" icon="🌊" label="Ocean" />
+          <HeaderButton id="btn-village" icon="🏘️" label="Generate Village" />
           <HeaderButton id="btn-daynight" icon="☀️" label="Day/Night" />
           <HeaderButton id="btn-toggle" icon="⚙️" label="Toggle UI" />
           <HeaderButton id="btn-clear" icon="♻️" label="Reset" className="purge" />

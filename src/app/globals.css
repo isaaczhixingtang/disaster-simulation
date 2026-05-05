@@ -316,6 +316,11 @@
             justify-content: center;
             white-space: nowrap;
         }
+        .header-btn[aria-pressed="true"] {
+            background: rgba(251, 191, 36, 0.95);
+            color: #111827;
+            border-color: rgba(254, 240, 138, 0.9);
+        }
         .header-btn .icon { line-height: 1; }
         .header-btn:active { transform: scale(0.95); }
         .header-btn.purge { background: rgba(220,38,38,0.85); }
@@ -333,6 +338,10 @@
             transition: transform 0.3s ease;
         }
         #toolbar.hidden { transform: translateY(calc(100% - 30px)); }
+        #toolbar.hidden #tabs,
+        #toolbar.hidden .tray {
+            pointer-events: none;
+        }
 
         /* Drag handle to collapse */
         #handle {
@@ -422,8 +431,7 @@
         }
 
         @media (max-width: 520px) {
-            #title span:not(.icon),
-            .header-btn .btn-label {
+            #title span:not(.icon) {
                 display: none;
             }
             #title {
@@ -433,6 +441,19 @@
                 border-radius: 10px;
                 background: rgba(15,23,42,0.65);
                 border: 1px solid rgba(255,255,255,0.08);
+            }
+            #header-actions {
+                gap: 6px;
+            }
+            .header-btn {
+                min-width: auto;
+                min-height: 38px;
+                padding: 8px 9px;
+                font-size: 0.68rem;
+                gap: 4px;
+            }
+            .header-btn .icon {
+                font-size: 0.95rem;
             }
             #survival-hud {
                 flex-wrap: wrap;

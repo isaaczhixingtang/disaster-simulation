@@ -21,6 +21,8 @@ let scene, camera, renderer, controls, raycaster, mouse, ground, grid;
 
         let singularityPoint = null;
         let tornadoes = []; // array of { mesh, point, age }
+        let lightningVortices = []; // purple storm clouds that rain lightning for 30 seconds
+        let lightningBolts = []; // short-lived bolt visuals
         let tsunamis = []; // array of { mesh, position, dir, age, lifeMax }
         let volcanoes = []; // array of { mesh, point, age, lifeMax, lavaPool }
         let lavaBombs = []; // airborne lava projectiles
@@ -127,7 +129,7 @@ let scene, camera, renderer, controls, raycaster, mouse, ground, grid;
         }
 
         // Build/destroy tools
-        const DESTROY_TOOLS = new Set(['fire','vortex','whirlpool','quake','tsunami','volcano','lavaflood','napalm','cluster','nuke','blackhole','meteor','cracker','monarch','battleship','mothership','leviathan','kraken','maw']);
+        const DESTROY_TOOLS = new Set(['fire','vortex','tornado','whirlpool','quake','tsunami','volcano','lavaflood','napalm','cluster','nuke','blackhole','meteor','cracker','battleship','mothership','leviathan','kraken','maw']);
 
         function addMultiTarget(pt) {
             multiTargets.push(pt.clone());
@@ -248,7 +250,8 @@ let scene, camera, renderer, controls, raycaster, mouse, ground, grid;
             const pt = screenToGround(e);
             if (!pt) return;
 
-            if (['house', 'skyscraper', 'tree', 'human', 'builder', 'invader', 'animal', 'mountain', 'island', 'ship'].includes(currentBrush)) {
+            if (['house', 'skyscraper', 'tree', 'streetlamp', 'human', 'builder', 'invader', 'animal', 'mountain', 'island', 'ship'].includes(currentBrush)) {
+                if ((currentBrush === 'ship' || currentBrush === 'island') && !canPlaceOnWater(pt, currentBrush)) return;
                 placeObject(currentBrush, pt);
             } else if (DESTROY_TOOLS.has(currentBrush)) {
                 if (e.shiftKey) {
@@ -301,6 +304,22 @@ let scene, camera, renderer, controls, raycaster, mouse, ground, grid;
                     child.userData.originalColor = child.material.color.getHex();
                 }
             });
+        }
+
+        function canBurnObject(obj) {
+            return obj && obj.userData && !obj.userData.fireImmune;
+        }
+
+        function getBuilderLumberCost(type) {
+            if (type === 'skyscraper') return 5;
+            if (type === 'streetlamp') return 1;
+            return 3;
+        }
+
+        function getBuilderBuildTime(type) {
+            if (type === 'skyscraper') return 480;
+            if (type === 'streetlamp') return 150;
+            return 300;
         }
 
         // ===== PROCEDURAL HOUSE BUILDER =====
@@ -1633,6 +1652,10 @@ let scene, camera, renderer, controls, raycaster, mouse, ground, grid;
             for (let i = 0; i < treeCount; i++) {
                 const tree = new THREE.Group();
                 buildTree(tree);
+                tree.userData.isIslandTree = true;
+                tree.userData.onFire = false;
+                tree.userData.burnLevel = 0;
+                tree.userData.spreadTimer = 0;
                 const a = Math.random() * Math.PI * 2;
                 const r = Math.sqrt(Math.random()) * 0.72;
                 tree.position.set(Math.cos(a) * radiusX * r, height + 0.45, Math.sin(a) * radiusZ * r);
@@ -1661,6 +1684,64 @@ let scene, camera, renderer, controls, raycaster, mouse, ground, grid;
             group.userData.islandSeed = islandSeed;
         }
 
+        function buildStreetLamp(group) {
+            const postMat = new THREE.MeshStandardMaterial({ color: 0x2f3744, roughness: 0.55, metalness: 0.35 });
+            const trimMat = new THREE.MeshStandardMaterial({ color: 0x111827, roughness: 0.65, metalness: 0.25 });
+            const bulbMat = new THREE.MeshStandardMaterial({
+                color: 0xfff7c2,
+                emissive: 0xffc857,
+                emissiveIntensity: 0.25,
+                roughness: 0.2
+            });
+
+            const base = new THREE.Mesh(new THREE.CylinderGeometry(0.5, 0.7, 0.35, 12), trimMat);
+            base.position.y = 0.18;
+            base.castShadow = true;
+            base.receiveShadow = true;
+            group.add(base);
+
+            const post = new THREE.Mesh(new THREE.CylinderGeometry(0.14, 0.18, 6.2, 12), postMat);
+            post.position.y = 3.25;
+            post.castShadow = true;
+            group.add(post);
+
+            const arm = new THREE.Mesh(new THREE.BoxGeometry(1.8, 0.14, 0.14), postMat);
+            arm.position.set(0.75, 6.15, 0);
+            arm.castShadow = true;
+            group.add(arm);
+
+            const shade = new THREE.Mesh(new THREE.ConeGeometry(0.72, 0.48, 16, 1, true), trimMat);
+            shade.position.set(1.65, 5.78, 0);
+            shade.rotation.x = Math.PI;
+            shade.castShadow = true;
+            group.add(shade);
+
+            const bulb = new THREE.Mesh(new THREE.SphereGeometry(0.28, 16, 10), bulbMat);
+            bulb.position.set(1.65, 5.55, 0);
+            bulb.userData.isStreetLampBulb = true;
+            group.add(bulb);
+
+            const glow = new THREE.Mesh(
+                new THREE.SphereGeometry(1.9, 18, 12),
+                new THREE.MeshBasicMaterial({ color: 0xffd36b, transparent: true, opacity: 0.04, depthWrite: false })
+            );
+            glow.position.set(1.65, 5.45, 0);
+            glow.userData.isStreetLampGlow = true;
+            group.add(glow);
+
+            const light = new THREE.PointLight(0xffcf72, 0.15, 34, 1.6);
+            light.position.set(1.65, 5.7, 0);
+            light.castShadow = false;
+            light.userData.isStreetLampLight = true;
+            group.add(light);
+
+            group.userData.type = 'streetlamp';
+            group.userData.hp = 140;
+            group.userData.maxHp = 140;
+            group.userData.footprint = 2.5;
+            group.userData.fireImmune = true;
+        }
+
         function placeObject(type, pt) {
             const group = new THREE.Group();
             group.userData = {
@@ -1684,6 +1765,8 @@ let scene, camera, renderer, controls, raycaster, mouse, ground, grid;
                 buildSkyscraper(group);
             } else if (type === 'tree') {
                 buildTree(group);
+            } else if (type === 'streetlamp') {
+                buildStreetLamp(group);
             } else if (type === 'mountain') {
                 buildMountain(group);
             } else if (type === 'island') {
@@ -1916,6 +1999,7 @@ let scene, camera, renderer, controls, raycaster, mouse, ground, grid;
             storeOriginalColors(group);
             scene.add(group);
             worldObjects.push(group);
+            if (type === 'streetlamp') updateStreetLampLighting(windowsAreNightMode);
         }
 
         function findNearestHouse(pos) {
@@ -2166,10 +2250,13 @@ let scene, camera, renderer, controls, raycaster, mouse, ground, grid;
             } else if (type === 'maw') {
                 spawnGroundMaw(pt);
             } else if (type === 'vortex') {
+                spawnLightningVortex(pt);
+            } else if (type === 'tornado') {
                 spawnTornado(pt);
             } else if (type === 'whirlpool') {
+                if (!canPlaceOnWater(pt, 'whirlpool')) return;
                 spawnWhirlpool(pt, 30, 1200);
-                showMessage('Whirlpool opened: ships are being pulled in');
+                showMessage('Whirlpool opened: ships and people are being pulled in');
             } else if (type === 'quake') {
                 earthquake();
             } else if (type === 'napalm') {
@@ -2253,6 +2340,238 @@ let scene, camera, renderer, controls, raycaster, mouse, ground, grid;
             anim();
         }
 
+        function disposeObjectTree(root) {
+            root.traverse(child => {
+                if (!child.isMesh && !child.isLine) return;
+                if (child.geometry) child.geometry.dispose();
+                if (child.material) {
+                    if (Array.isArray(child.material)) child.material.forEach(mat => mat.dispose());
+                    else child.material.dispose();
+                }
+            });
+        }
+
+        function spawnLightningVortex(pt) {
+            const cloud = new THREE.Group();
+            const vortexAltitude = 320;
+
+            const cloudMat = new THREE.MeshBasicMaterial({
+                color: 0x8b5cf6,
+                transparent: true,
+                opacity: 0.5,
+                depthWrite: false
+            });
+            const coreMat = new THREE.MeshBasicMaterial({
+                color: 0xd8b4fe,
+                transparent: true,
+                opacity: 0.72,
+                depthWrite: false
+            });
+
+            for (let i = 0; i < 38; i++) {
+                const puff = new THREE.Mesh(
+                    new THREE.SphereGeometry(8 + Math.random() * 10, 14, 10),
+                    i % 5 === 0 ? coreMat.clone() : cloudMat.clone()
+                );
+                const angle = Math.random() * Math.PI * 2;
+                const radius = Math.random() * 46;
+                puff.position.set(
+                    Math.cos(angle) * radius,
+                    Math.random() * 32,
+                    Math.sin(angle) * radius
+                );
+                puff.scale.y = 0.55 + Math.random() * 0.35;
+                puff.userData.baseScale = puff.scale.clone();
+                cloud.add(puff);
+            }
+
+            const underside = new THREE.PointLight(0xb026ff, 5.5, 260);
+            underside.position.y = -18;
+            cloud.add(underside);
+
+            const marker = new THREE.Mesh(
+                new THREE.TorusGeometry(34, 1.1, 10, 72),
+                new THREE.MeshBasicMaterial({ color: 0xe9d5ff, transparent: true, opacity: 0.75, depthWrite: false })
+            );
+            marker.rotation.x = Math.PI / 2;
+            marker.position.y = -22;
+            marker.userData.baseScale = marker.scale.clone();
+            cloud.add(marker);
+
+            cloud.position.copy(pt);
+            cloud.position.y = vortexAltitude;
+            scene.add(cloud);
+
+            lightningVortices.push({
+                mesh: cloud,
+                point: pt.clone(),
+                age: 0,
+                lifeMax: 1800,
+                nextStrike: 4
+            });
+            showMessage('Purple vortex opened: lightning storm for 30 seconds');
+        }
+
+        function despawnLightningVortex(vortex) {
+            if (!vortex.mesh) return;
+            scene.remove(vortex.mesh);
+            disposeObjectTree(vortex.mesh);
+        }
+
+        function despawnAllLightningVortices() {
+            lightningVortices.forEach(despawnLightningVortex);
+            lightningVortices = [];
+            lightningBolts.forEach(bolt => {
+                scene.remove(bolt.mesh);
+                disposeObjectTree(bolt.mesh);
+            });
+            lightningBolts = [];
+        }
+
+        function createLightningBolt(start, end) {
+            const points = [];
+            const segments = 10 + Math.floor(Math.random() * 6);
+            for (let i = 0; i <= segments; i++) {
+                const t = i / segments;
+                const p = start.clone().lerp(end, t);
+                const wobble = (1 - Math.abs(0.5 - t) * 2) * 8;
+                p.x += (Math.random() - 0.5) * wobble;
+                p.z += (Math.random() - 0.5) * wobble;
+                points.push(p);
+            }
+
+            const curve = new THREE.CatmullRomCurve3(points);
+            const bolt = new THREE.Group();
+            const glow = new THREE.Mesh(
+                new THREE.TubeGeometry(curve, Math.max(18, segments * 3), 1.45, 8, false),
+                new THREE.MeshBasicMaterial({ color: 0xc084fc, transparent: true, opacity: 0.62, depthWrite: false })
+            );
+            const core = new THREE.Mesh(
+                new THREE.TubeGeometry(curve, Math.max(18, segments * 3), 0.42, 8, false),
+                new THREE.MeshBasicMaterial({ color: Math.random() < 0.5 ? 0xf8fafc : 0xf0abfc, transparent: true, opacity: 1 })
+            );
+            bolt.add(glow, core);
+            scene.add(bolt);
+            lightningBolts.push({ mesh: bolt, life: 28 });
+
+            if (Math.random() < 0.45) {
+                const branchEnd = end.clone().add(new THREE.Vector3((Math.random() - 0.5) * 20, 2 + Math.random() * 8, (Math.random() - 0.5) * 20));
+                const branchCurve = new THREE.CatmullRomCurve3([points[Math.floor(points.length * 0.55)].clone(), branchEnd]);
+                const branch = new THREE.Mesh(
+                    new THREE.TubeGeometry(branchCurve, 8, 0.26, 6, false),
+                    new THREE.MeshBasicMaterial({ color: 0xe9d5ff, transparent: true, opacity: 0.95 })
+                );
+                scene.add(branch);
+                lightningBolts.push({ mesh: branch, life: 18 });
+            }
+        }
+
+        function createThunderShockwave(pos) {
+            const ring = new THREE.Mesh(
+                new THREE.TorusGeometry(3, 0.18, 8, 48),
+                new THREE.MeshBasicMaterial({ color: 0xe9d5ff, transparent: true, opacity: 0.8 })
+            );
+            ring.rotation.x = Math.PI / 2;
+            ring.position.copy(pos);
+            ring.position.y = 0.25;
+            scene.add(ring);
+            lightningBolts.push({ mesh: ring, life: 18, expand: 1.22 });
+        }
+
+        function chooseLightningTarget(vortex) {
+            const candidates = worldObjects.filter(obj => {
+                if (!obj.userData || obj.userData.hp <= 0 || obj.userData.isCorpse || obj.userData.frozen) return false;
+                if (obj.userData.type === 'road') return false;
+                return obj.position.distanceTo(vortex.point) < 170 || Math.random() < 0.12;
+            });
+
+            if (candidates.length > 0 && Math.random() < 0.72) {
+                const obj = candidates[Math.floor(Math.random() * candidates.length)];
+                return obj.position.clone().add(new THREE.Vector3((Math.random() - 0.5) * 4, 0, (Math.random() - 0.5) * 4));
+            }
+
+            const angle = Math.random() * Math.PI * 2;
+            const radius = 20 + Math.random() * 150;
+            return vortex.point.clone().add(new THREE.Vector3(Math.cos(angle) * radius, 0, Math.sin(angle) * radius));
+        }
+
+        function smashObjectIntoPieces(obj, force = 2.3) {
+            const type = obj.userData.type;
+            const pos = obj.position.clone();
+            if (type === 'house' || type === 'rubble') {
+                shatter(pos, 30, obj.userData.skeleton ? 0x171717 : 0x94a3b8, force);
+                shatter(pos.clone().add(new THREE.Vector3(0, 2, 0)), 14, 0x7f1d1d, force * 0.9);
+            } else if (type === 'skyscraper') {
+                shatter(pos, 54, 0x6b7280, force * 1.25);
+                shatter(pos.clone().add(new THREE.Vector3(0, 10, 0)), 30, 0x60a5fa, force);
+            } else if (type === 'tree') {
+                shatter(pos.clone().add(new THREE.Vector3(0, 3, 0)), 14, 0x78350f, force * 0.75);
+            } else if (type === 'mountain') {
+                shatter(pos.clone().add(new THREE.Vector3(0, 4, 0)), 24, 0x57534e, force);
+            } else if (type === 'island') {
+                shatter(pos, 24, 0xd6b36a, force);
+                shatter(pos.clone().add(new THREE.Vector3(0, 2, 0)), 14, 0x166534, force * 0.8);
+            } else if (type === 'ship') {
+                spawnShipwreckDebris(pos, force);
+            } else {
+                shatter(pos.clone().add(new THREE.Vector3(0, 1, 0)), 10, 0x1f2937, force * 0.6);
+            }
+            scene.remove(obj);
+            const idx = worldObjects.indexOf(obj);
+            if (idx >= 0) worldObjects.splice(idx, 1);
+        }
+
+        function strikeLightningAt(vortex, targetPt) {
+            const start = vortex.mesh.position.clone().add(new THREE.Vector3((Math.random() - 0.5) * 36, -28 + Math.random() * 18, (Math.random() - 0.5) * 36));
+            const end = targetPt.clone();
+            end.y = 0.6;
+            createLightningBolt(start, end);
+            createThunderShockwave(end);
+
+            const flash = new THREE.PointLight(0xf5d0fe, 5, 85);
+            flash.position.copy(end).setY(12);
+            scene.add(flash);
+            lightningBolts.push({ mesh: flash, life: 5 });
+
+            for (let i = 0; i < 5; i++) {
+                createFireParticle(end.clone().add(new THREE.Vector3((Math.random() - 0.5) * 5, 0, (Math.random() - 0.5) * 5)), i % 3 === 0);
+            }
+
+            worldObjects.slice().forEach(obj => {
+                if (!obj.userData || obj.userData.type === 'road') return;
+                const d = obj.position.distanceTo(end);
+                if (d > 11) return;
+
+                const ud = obj.userData;
+                if (ud.type === 'human' || ud.type === 'builder') {
+                    ud.hp = 0;
+                } else if (ud.type === 'house' || ud.type === 'rubble') {
+                    smashObjectIntoPieces(obj, 2.4);
+                } else {
+                    if (!(ud.type === 'tree' && (ud.hasFallen || ud.isFalling))) ud.onFire = true;
+                    ud.hp -= ud.type === 'skyscraper' || ud.type === 'mountain' ? 220 : 420;
+                    if (!ud.isStatic && ud.velocity) {
+                        const away = new THREE.Vector3().subVectors(obj.position, end).normalize();
+                        ud.velocity.add(away.multiplyScalar(2.2).add(new THREE.Vector3(0, 1.6, 0)));
+                    }
+                    if (ud.hp <= 0 && ud.type !== 'human' && ud.type !== 'builder' && Math.random() < 0.8) {
+                        smashObjectIntoPieces(obj, 2.1);
+                    }
+                }
+            });
+
+            debris.forEach(d => {
+                if (d.position.distanceTo(end) > 12) return;
+                d.userData.onFire = true;
+                d.userData.hp -= 80;
+                d.userData.velocity.add(new THREE.Vector3((Math.random() - 0.5) * 2.5, 1.8, (Math.random() - 0.5) * 2.5));
+                d.userData.settled = false;
+            });
+
+            igniteRadius(end, 14, true);
+            survivalDamageAtPoint(end, 14, 67, 'thunder strike', 400);
+        }
+
         // --- TORNADO: visible mesh + corrected physics, supports multiple ---
         function spawnTornado(pt) {
             const mesh = new THREE.Group();
@@ -2281,6 +2600,7 @@ let scene, camera, renderer, controls, raycaster, mouse, ground, grid;
                 point: pt.clone(),
                 age: 0
             });
+            showMessage('Tornado spawned');
         }
 
         function despawnTornado(t) {
@@ -3450,12 +3770,29 @@ let scene, camera, renderer, controls, raycaster, mouse, ground, grid;
             group.add(spine);
 
             const banks = [];
+            const cannons = [];
             for (const side of [-1, 1]) {
                 for (let i = 0; i < 4; i++) {
                     const bank = new THREE.Mesh(new THREE.BoxGeometry(3.5, 2.2, 11), panelMat.clone());
                     bank.position.set(side * 18.5, -1.5, -20 + i * 13);
                     group.add(bank);
                     banks.push(bank);
+                }
+                for (let i = 0; i < 3; i++) {
+                    const turret = new THREE.Group();
+                    const base = new THREE.Mesh(new THREE.CylinderGeometry(3.4, 3.9, 2.1, 18), armorMat);
+                    base.rotation.z = Math.PI / 2;
+                    turret.add(base);
+                    const barrel = new THREE.Mesh(new THREE.CylinderGeometry(0.55, 0.75, 11, 12), hullMat);
+                    barrel.rotation.x = Math.PI / 2;
+                    barrel.position.z = side * 5.8;
+                    barrel.castShadow = true;
+                    turret.add(barrel);
+                    turret.position.set(-10 + i * 10, 5.8, side * 22.5);
+                    turret.userData.side = side;
+                    turret.userData.barrel = barrel;
+                    group.add(turret);
+                    cannons.push(turret);
                 }
                 const wing = new THREE.Mesh(new THREE.BoxGeometry(17, 3.2, 46), hullMat);
                 wing.position.set(side * 25, 0, -1);
@@ -3485,7 +3822,7 @@ let scene, camera, renderer, controls, raycaster, mouse, ground, grid;
             coreLight.position.copy(core.position);
             group.add(coreLight);
 
-            return { group, banks, core, coreRing, shield, coreLight };
+            return { group, banks, cannons, core, coreRing, shield, coreLight };
         }
 
         function faceBattleshipHorizontally(group, target) {
@@ -3530,18 +3867,77 @@ let scene, camera, renderer, controls, raycaster, mouse, ground, grid;
                 age: 0,
                 beams: [],
                 plasmaBolts: [],
+                missiles: [],
                 firedPlasma: 0,
+                firedMissiles: 0,
                 sweepSeed: Math.random() * Math.PI * 2,
                 drift: new THREE.Vector3((Math.random() - 0.5) * 0.22, 0, (Math.random() - 0.5) * 0.22),
             });
-            showMessage('Ancient Battleship warping in');
+            showMessage('Ancient Battleship warping in with missile cannons');
         }
 
         function removeAncientBattleship(bs) {
             bs.beams.forEach(b => scene.remove(b));
             bs.plasmaBolts.forEach(p => scene.remove(p.mesh));
+            bs.missiles.forEach(m => scene.remove(m.mesh));
             if (bs.group) scene.remove(bs.group);
             if (bs.groundLight) scene.remove(bs.groundLight);
+        }
+
+        function findBattleshipMissileTarget(bs) {
+            let best = null;
+            let bestScore = Infinity;
+            worldObjects.forEach(obj => {
+                if (obj.userData.hp <= 0 || obj.userData.frozen || obj.userData.type === 'road') return;
+                if (obj.userData.type === 'island' && Math.random() < 0.5) return;
+                const dTarget = obj.position.distanceTo(bs.target);
+                const dShip = obj.position.distanceTo(bs.group.position);
+                const score = dTarget + dShip * 0.18 + Math.random() * 40;
+                if (score < bestScore) {
+                    bestScore = score;
+                    best = obj;
+                }
+            });
+            return best || null;
+        }
+
+        function spawnBattleshipMissile(bs) {
+            const target = findBattleshipMissileTarget(bs);
+            if (!target || !bs.cannons || bs.cannons.length === 0) return false;
+            const cannon = bs.cannons[bs.firedMissiles % bs.cannons.length];
+            const muzzleLocal = cannon.position.clone().add(new THREE.Vector3(0, 0, cannon.userData.side * 9));
+            const muzzle = muzzleLocal.applyEuler(bs.group.rotation).add(bs.group.position);
+            const missile = new THREE.Group();
+            const body = new THREE.Mesh(
+                new THREE.CylinderGeometry(0.72, 0.82, 5.5, 14),
+                new THREE.MeshStandardMaterial({ color: 0xdbeafe, metalness: 0.6, roughness: 0.28, emissive: 0x164e63, emissiveIntensity: 0.25 })
+            );
+            body.rotation.x = Math.PI / 2;
+            missile.add(body);
+            const nose = new THREE.Mesh(
+                new THREE.ConeGeometry(0.82, 1.8, 14),
+                new THREE.MeshStandardMaterial({ color: 0xf8fafc, metalness: 0.5, roughness: 0.22 })
+            );
+            nose.rotation.x = Math.PI / 2;
+            nose.position.z = 3.55;
+            missile.add(nose);
+            const flame = new THREE.Mesh(
+                new THREE.SphereGeometry(0.9, 8, 6),
+                new THREE.MeshBasicMaterial({ color: 0x67e8f9, transparent: true, opacity: 0.78, blending: THREE.AdditiveBlending })
+            );
+            flame.position.z = -3.0;
+            missile.add(flame);
+            missile.position.copy(muzzle);
+            scene.add(missile);
+            bs.missiles.push({
+                mesh: missile,
+                target,
+                vel: new THREE.Vector3(0, -0.18, 0).add(new THREE.Vector3(Math.random() - 0.5, 0, Math.random() - 0.5).multiplyScalar(0.12)),
+                age: 0,
+                flame
+            });
+            bs.firedMissiles++;
+            return true;
         }
 
         function updateAncientBattleships() {
@@ -3561,6 +3957,15 @@ let scene, camera, renderer, controls, raycaster, mouse, ground, grid;
                 bs.banks.forEach((bank, i) => {
                     bank.material.opacity = 0.28 + Math.sin(bs.age * 0.18 + i) * 0.14;
                 });
+                if (bs.cannons && bs.cannons.length > 0) {
+                    const aimTarget = findBattleshipMissileTarget(bs) || { position: bs.target };
+                    bs.cannons.forEach((cannon, i) => {
+                        const localTarget = aimTarget.position.clone().sub(bs.group.position).applyAxisAngle(new THREE.Vector3(0, 1, 0), -bs.group.rotation.y);
+                        const dx = localTarget.x - cannon.position.x;
+                        const dz = localTarget.z - cannon.position.z;
+                        cannon.rotation.y = Math.atan2(dx, dz) + Math.sin(bs.age * 0.03 + i) * 0.05;
+                    });
+                }
 
                 for (let pi = bs.plasmaBolts.length - 1; pi >= 0; pi--) {
                     const p = bs.plasmaBolts[pi];
@@ -3576,6 +3981,37 @@ let scene, camera, renderer, controls, raycaster, mouse, ground, grid;
                         createBattleshipCrater(p.end, 16 + Math.random() * 10);
                         scene.remove(p.mesh);
                         bs.plasmaBolts.splice(pi, 1);
+                    }
+                }
+
+                for (let mi = bs.missiles.length - 1; mi >= 0; mi--) {
+                    const m = bs.missiles[mi];
+                    m.age++;
+                    if (!m.target || !worldObjects.includes(m.target) || m.target.userData.hp <= 0) {
+                        m.target = findBattleshipMissileTarget(bs);
+                    }
+                    const targetPos = (m.target ? m.target.position : bs.target).clone();
+                    targetPos.y = Math.max(2, Math.min(28, (m.target?.userData.totalHeight || 6) * 0.45));
+                    const desired = new THREE.Vector3().subVectors(targetPos, m.mesh.position);
+                    const dist = desired.length();
+                    if (dist > 0.001) {
+                        desired.normalize().multiplyScalar(1.55);
+                        m.vel.lerp(desired, 0.055);
+                    }
+                    m.mesh.position.add(m.vel);
+                    m.mesh.lookAt(m.mesh.position.clone().add(m.vel));
+                    if (m.flame) m.flame.scale.setScalar(0.72 + Math.random() * 0.45);
+                    if (Math.random() < 0.75) createFireParticle(m.mesh.position.clone(), Math.random() < 0.55);
+                    if (dist < 5.5 || m.mesh.position.y < 0.8 || m.age > 220) {
+                        const hit = m.target ? m.target.position.clone() : m.mesh.position.clone();
+                        hit.y = 1.2;
+                        explode(hit, 22, 0x9ffbff);
+                        applyBlast(hit, 38, 9, 3, 520, true, true);
+                        survivalDamageAtPoint(hit, 36, 31, 'battleship missile', 800);
+                        igniteRadius(hit, 28, true);
+                        shatter(hit, 8, 0x86dfff, 1.8);
+                        scene.remove(m.mesh);
+                        bs.missiles.splice(mi, 1);
                     }
                 }
 
@@ -3598,6 +4034,7 @@ let scene, camera, renderer, controls, raycaster, mouse, ground, grid;
                         showMessage('Ancient Battleship cutting beam sweep');
                     }
                 } else if (bs.phase === 'laser') {
+                    if (bs.phaseTimer % 34 === 8) spawnBattleshipMissile(bs);
                     const sweep = Math.sin(bs.phaseTimer * 0.052 + bs.sweepSeed);
                     const baseDir = new THREE.Vector3().subVectors(bs.target, bs.group.position);
                     baseDir.y = 0;
@@ -3628,6 +4065,7 @@ let scene, camera, renderer, controls, raycaster, mouse, ground, grid;
                     }
                 } else if (bs.phase === 'plasma') {
                     bs.groundLight.intensity = 9;
+                    if (bs.phaseTimer % 22 === 1) spawnBattleshipMissile(bs);
                     if (bs.phaseTimer % 28 === 1 && bs.firedPlasma < 6) {
                         const spread = new THREE.Vector3((Math.random() - 0.5) * 108, 0, (Math.random() - 0.5) * 108);
                         const end = bs.target.clone().add(spread);
@@ -5039,6 +5477,37 @@ let scene, camera, renderer, controls, raycaster, mouse, ground, grid;
             }
         }
 
+        function pullPersonTowardWhirlpools(person) {
+            const ud = person.userData;
+            if (ud.isCorpse || ud.frozen || ud.hidden) return false;
+            for (const w of whirlpools) {
+                const dx = w.point.x - person.position.x;
+                const dz = w.point.z - person.position.z;
+                const d = Math.sqrt(dx * dx + dz * dz);
+                if (d > w.radius * 2.0) continue;
+                const pull = Math.pow(1 - Math.min(1, d / (w.radius * 2.0)), 1.35);
+                const dir = new THREE.Vector3(dx, 0, dz).normalize();
+                const tangent = new THREE.Vector3(-dir.z, 0, dir.x);
+                person.position.add(dir.multiplyScalar(0.045 + pull * 0.36));
+                person.position.add(tangent.multiplyScalar(pull * 0.12));
+                person.rotation.y += 0.12 + pull * 0.22;
+                person.position.y = Math.max(0, person.position.y - pull * 0.02);
+                ud.velocity.add(dir.multiplyScalar(pull * 0.08));
+                ud.hp -= pull * 0.12;
+                if (Math.random() < pull * 0.08) {
+                    createFireParticle(person.position.clone().add(new THREE.Vector3(0, 0.6, 0)), true);
+                }
+                if (d < w.radius * 0.22) {
+                    scene.remove(person);
+                    const idx = worldObjects.indexOf(person);
+                    if (idx >= 0) worldObjects.splice(idx, 1);
+                    showMessage('A whirlpool pulls someone under');
+                    return true;
+                }
+            }
+            return false;
+        }
+
         function sinkShip(ship, reason) {
             const ud = ship.userData;
             if (ud.sinking) return;
@@ -5653,6 +6122,34 @@ let scene, camera, renderer, controls, raycaster, mouse, ground, grid;
             if (grid) grid.visible = !active;
         }
 
+        function isOceanActive() {
+            return !!(oceanGroup && oceanGroup.visible);
+        }
+
+        function pointTouchesIsland(pt, padding = 0) {
+            return worldObjects.some(obj => {
+                if (obj.userData.type !== 'island' || obj.userData.hp <= 0) return false;
+                const radius = (obj.userData.footprint || 18) * 0.5 + padding;
+                const dx = pt.x - obj.position.x;
+                const dz = pt.z - obj.position.z;
+                return Math.sqrt(dx * dx + dz * dz) < radius;
+            });
+        }
+
+        function canPlaceOnWater(pt, type) {
+            const label = type === 'ship' ? 'Ships' : type === 'whirlpool' ? 'Whirlpools' : 'Islands';
+            if (!isOceanActive()) {
+                showMessage(`${label} need open water`);
+                return false;
+            }
+            const padding = type === 'ship' ? 8 : type === 'whirlpool' ? 4 : 12;
+            if (pointTouchesIsland(pt, padding)) {
+                showMessage(`${label} cannot be placed on land`);
+                return false;
+            }
+            return true;
+        }
+
         function createOceanWorldSurface() {
             clearOcean();
             const group = new THREE.Group();
@@ -5840,6 +6337,7 @@ let scene, camera, renderer, controls, raycaster, mouse, ground, grid;
             cooledLavaPools.forEach(p => { scene.remove(p); if (p.geometry) p.geometry.dispose(); if (p.material) p.material.dispose(); });
             cooledLavaPools = [];
             despawnAllTornadoes();
+            despawnAllLightningVortices();
             despawnAllTsunamis();
             despawnAllVolcanoes();
             despawnAllCyclopses();
@@ -5898,6 +6396,29 @@ let scene, camera, renderer, controls, raycaster, mouse, ground, grid;
                 }
             }
 
+            // Street lamps along paths between homes and the town center.
+            const lampCount = Math.min(18, Math.max(10, Math.floor(placed.length * 0.75)));
+            const lampAnchors = placed.slice();
+            let lampsPlaced = 0;
+            for (let i = 0; i < lampCount; i++) {
+                const anchor = lampAnchors[i % lampAnchors.length];
+                if (!anchor) continue;
+                const toCenter = anchor.clone().multiplyScalar(-1);
+                if (toCenter.lengthSq() < 0.01) toCenter.set(Math.random() - 0.5, 0, Math.random() - 0.5);
+                toCenter.normalize();
+                const side = new THREE.Vector3(-toCenter.z, 0, toCenter.x).multiplyScalar((i % 2 === 0 ? 1 : -1) * (5 + Math.random() * 3));
+                const inward = toCenter.multiplyScalar(4 + Math.random() * 5);
+                const pos = anchor.clone().add(inward).add(side);
+                let collides = false;
+                for (const p of placed) {
+                    if (p.distanceTo(pos) < 4) { collides = true; break; }
+                }
+                if (collides) continue;
+                placeObject('streetlamp', pos);
+                placed.push(pos.clone());
+                lampsPlaced++;
+            }
+
             // Trees scattered between houses, more dense at the outskirts
             const treeCount = 25 + Math.floor(Math.random() * 20);
             for (let i = 0; i < treeCount; i++) {
@@ -5941,7 +6462,7 @@ let scene, camera, renderer, controls, raycaster, mouse, ground, grid;
 
             // Initial residents will spawn over time via auto-spawner
             spawnGrass();
-            showMessage(`Village built: ${houseCount} houses · ${mountainCount} mountains`);
+            showMessage(`Village built: ${houseCount} houses · ${lampsPlaced} lamps · ${mountainCount} mountains`);
         }
 
         function generateTerrain() {
@@ -5971,6 +6492,7 @@ let scene, camera, renderer, controls, raycaster, mouse, ground, grid;
             cooledLavaPools.forEach(p => { scene.remove(p); if (p.geometry) p.geometry.dispose(); if (p.material) p.material.dispose(); });
             cooledLavaPools = [];
             despawnAllTornadoes();
+            despawnAllLightningVortices();
             despawnAllTsunamis();
             despawnAllVolcanoes();
             despawnAllCyclopses();
@@ -6171,6 +6693,7 @@ let scene, camera, renderer, controls, raycaster, mouse, ground, grid;
             cooledLavaPools.forEach(p => { scene.remove(p); if (p.geometry) p.geometry.dispose(); if (p.material) p.material.dispose(); });
             cooledLavaPools = [];
             despawnAllTornadoes();
+            despawnAllLightningVortices();
             despawnAllTsunamis();
             despawnAllVolcanoes();
             despawnAllCyclopses();
@@ -6210,12 +6733,14 @@ let scene, camera, renderer, controls, raycaster, mouse, ground, grid;
         function igniteRadius(center, radius, includeFallen = false) {
             worldObjects.forEach(obj => {
                 if (obj.userData.type === 'road') return;
+                if (!canBurnObject(obj)) return;
                 // Fallen logs only catch from direct ignition (e.g. flamethrower tool), not passive spread
                 if (!includeFallen && obj.userData.type === 'tree' && (obj.userData.hasFallen || obj.userData.isFalling)) return;
                 const d = obj.position.distanceTo(center);
                 if (d < radius) {
                     obj.userData.onFire = true;
                 }
+                if (obj.userData.type === 'island') igniteIslandTrees(obj, center, radius, includeFallen);
             });
             debris.forEach(d => {
                 if (d.position.distanceTo(center) < radius) {
@@ -6226,6 +6751,60 @@ let scene, camera, renderer, controls, raycaster, mouse, ground, grid;
                 if (c.state === 'dying' || c.state === 'dead') return;
                 if (c.mesh.position.distanceTo(center) < radius) {
                     c.onFire = true;
+                }
+            });
+        }
+
+        function igniteIslandTrees(island, center, radius, includeFallen = false) {
+            const treePos = new THREE.Vector3();
+            island.children.forEach(child => {
+                if (!child.userData || child.userData.type !== 'tree') return;
+                if (!includeFallen && (child.userData.hasFallen || child.userData.isFalling)) return;
+                child.getWorldPosition(treePos);
+                if (treePos.distanceTo(center) < radius) {
+                    child.userData.onFire = true;
+                }
+            });
+        }
+
+        function updateIslandTrees(island) {
+            const treePos = new THREE.Vector3();
+            island.children.forEach(tree => {
+                const ud = tree.userData;
+                if (!ud || ud.type !== 'tree' || ud.skeleton) return;
+                if (ud.onFire) {
+                    ud.burnLevel = Math.min(1, (ud.burnLevel || 0) + 0.006);
+                    applyBurnTint(tree, ud.burnLevel);
+                    tree.getWorldPosition(treePos);
+                    if (Math.random() < 0.45) {
+                        createFireParticle(treePos.clone().add(new THREE.Vector3(0, 1.5 + Math.random() * 2.5, 0)));
+                    }
+                    if (Math.random() < 0.15) {
+                        createFireParticle(treePos.clone().add(new THREE.Vector3(0, 2.5 + Math.random() * 2, 0)), true);
+                    }
+                    ud.spreadTimer = (ud.spreadTimer || 0) + 1;
+                    if (ud.spreadTimer > 42) {
+                        island.children.forEach(other => {
+                            if (!other.userData || other.userData.type !== 'tree' || other.userData.onFire || other.userData.skeleton) return;
+                            if (other.position.distanceTo(tree.position) < 8 && Math.random() < 0.18) other.userData.onFire = true;
+                        });
+                        ud.spreadTimer = 0;
+                    }
+                    if (ud.burnLevel >= 0.95) {
+                        burnedToSkeleton(tree);
+                    }
+                }
+                if (ud.isFalling) {
+                    const targetAngle = Math.PI / 2;
+                    if (ud.fallAngle < targetAngle) {
+                        ud.fallAngle += 0.025 + ud.fallAngle * 0.05;
+                        ud.fallAngle = Math.min(ud.fallAngle, targetAngle);
+                        tree.rotation.x = ud.fallAxis.z * ud.fallAngle;
+                        tree.rotation.z = -ud.fallAxis.x * ud.fallAngle;
+                    } else {
+                        ud.isFalling = false;
+                        ud.hasFallen = true;
+                    }
                 }
             });
         }
@@ -6259,7 +6838,7 @@ let scene, camera, renderer, controls, raycaster, mouse, ground, grid;
                 if (heat && Math.random() < p * 0.5) {
                     // Fallen logs don't catch from heat — only direct ignition
                     const isFallen = obj.userData.type === 'tree' && (obj.userData.hasFallen || obj.userData.isFalling);
-                    if (!isFallen) obj.userData.onFire = true;
+                    if (!isFallen && canBurnObject(obj)) obj.userData.onFire = true;
                 }
             });
             // Debris also gets blown around
@@ -7197,6 +7776,7 @@ let scene, camera, renderer, controls, raycaster, mouse, ground, grid;
             if (wantNight !== windowsAreNightMode) {
                 windowsAreNightMode = wantNight;
                 updateWindowLighting(wantNight);
+                updateStreetLampLighting(wantNight);
             }
 
             // Advance time only in auto mode
@@ -7229,6 +7809,22 @@ let scene, camera, renderer, controls, raycaster, mouse, ground, grid;
                         mat.emissive.set(0x000000);
                         mat.emissiveIntensity = 0;
                         mat.opacity = 0.7;
+                    }
+                });
+            });
+        }
+
+        function updateStreetLampLighting(isNight) {
+            worldObjects.forEach(obj => {
+                if (obj.userData.type !== 'streetlamp') return;
+                obj.traverse(child => {
+                    if (child.userData.isStreetLampLight) {
+                        child.intensity = isNight ? 1.9 : 0.15;
+                    } else if (child.userData.isStreetLampBulb && child.material && child.material.emissive) {
+                        child.material.emissiveIntensity = isNight ? 1.4 : 0.25;
+                        child.material.color.set(isNight ? 0xfff7c2 : 0xd8d3c0);
+                    } else if (child.userData.isStreetLampGlow && child.material) {
+                        child.material.opacity = isNight ? 0.18 : 0.04;
                     }
                 });
             });
@@ -7462,6 +8058,67 @@ let scene, camera, renderer, controls, raycaster, mouse, ground, grid;
                 if (t.age > 540) {
                     despawnTornado(t);
                     tornadoes.splice(ti, 1);
+                }
+            }
+
+            for (let vi = lightningVortices.length - 1; vi >= 0; vi--) {
+                const vortex = lightningVortices[vi];
+                vortex.age++;
+                const lifeLeft = Math.max(0, 1 - vortex.age / vortex.lifeMax);
+
+                vortex.mesh.rotation.y += 0.01;
+                vortex.mesh.children.forEach((child, i) => {
+                    if (child.isMesh) {
+                        child.rotation.y += 0.015 + i * 0.001;
+                        const pulse = 1 + Math.sin((vortex.age + i * 9) * 0.045) * 0.045;
+                        const baseScale = child.userData.baseScale || new THREE.Vector3(1, 1, 1);
+                        child.scale.set(baseScale.x * pulse, baseScale.y, baseScale.z * pulse);
+                    } else if (child.isLight) {
+                        child.intensity = 1.4 + Math.sin(vortex.age * 0.18) * 1.1;
+                    }
+                });
+
+                if (vortex.age >= vortex.nextStrike && vortex.age < vortex.lifeMax) {
+                    const strikes = 2 + Math.floor(Math.random() * 3);
+                    for (let s = 0; s < strikes; s++) {
+                        strikeLightningAt(vortex, chooseLightningTarget(vortex));
+                    }
+                    vortex.nextStrike = vortex.age + 7 + Math.floor(Math.random() * 10);
+                }
+
+                if (vortex.age > vortex.lifeMax - 180) {
+                    vortex.mesh.traverse(child => {
+                        if (child.material && child.material.opacity !== undefined) {
+                            child.material.opacity *= 0.985;
+                        }
+                    });
+                }
+
+                if (vortex.age >= vortex.lifeMax) {
+                    despawnLightningVortex(vortex);
+                    lightningVortices.splice(vi, 1);
+                    if (lifeLeft === 0) showMessage('Vortex dissipated');
+                }
+            }
+
+            for (let bi = lightningBolts.length - 1; bi >= 0; bi--) {
+                const bolt = lightningBolts[bi];
+                bolt.life--;
+                if (bolt.expand) {
+                    bolt.mesh.scale.multiplyScalar(bolt.expand);
+                }
+                bolt.mesh.traverse(child => {
+                    if (child.material && child.material.opacity !== undefined) {
+                        child.material.opacity = Math.max(0, child.material.opacity - 0.09);
+                    }
+                });
+                if (bolt.mesh.isLight) {
+                    bolt.mesh.intensity *= 0.64;
+                }
+                if (bolt.life <= 0) {
+                    scene.remove(bolt.mesh);
+                    disposeObjectTree(bolt.mesh);
+                    lightningBolts.splice(bi, 1);
                 }
             }
 
@@ -8569,6 +9226,7 @@ let scene, camera, renderer, controls, raycaster, mouse, ground, grid;
                 // But mountains can still be sucked in by black holes.
                 if (ud.isStatic) {
                     ud.velocity.set(0,0,0);
+                    if (ud.type === 'island') updateIslandTrees(o);
 
                     // Mountains: pulled into singularity
                     if (ud.type === 'mountain' && singularityPoint) {
@@ -8636,6 +9294,27 @@ let scene, camera, renderer, controls, raycaster, mouse, ground, grid;
                 // --- 1930s WOODEN SHIPS: sail, fire cannons, fight fires, sink through hull leaks ---
                 if (ud.type === 'ship') {
                     const forward = new THREE.Vector3(Math.sin(o.rotation.y), 0, Math.cos(o.rotation.y));
+                    if (singularityPoint) {
+                        const dirToSing = new THREE.Vector3().subVectors(singularityPoint, o.position);
+                        const d = dirToSing.length();
+                        const strength = Math.max(0.12, 72 / (d + 18));
+                        o.position.add(dirToSing.normalize().multiplyScalar(strength * 0.28));
+                        ud.velocity.add(dirToSing.normalize().multiplyScalar(strength * 0.12));
+                        o.rotation.y += 0.045 + Math.max(0, 1 - d / 95) * 0.12;
+                        if (d < 42) {
+                            const sc = Math.max(0.05, d / 42);
+                            o.scale.set(sc, sc, sc);
+                            ud.hp -= 2.6;
+                        }
+                        if (d < 9) {
+                            spawnOverboardCrew(o, ud.crewCount || 6);
+                            spawnShipwreckDebris(o.position.clone(), 1.5);
+                            scene.remove(o);
+                            worldObjects.splice(i, 1);
+                            showMessage('A black hole consumes a ship');
+                            continue;
+                        }
+                    }
                     if (!ud.sinking) {
                         const damageRatio = ud.maxHp ? ud.hp / ud.maxHp : 1;
                         ud.fleeing = damageRatio < 0.38 || ud.fleeing && damageRatio < 0.58;
@@ -8732,6 +9411,10 @@ let scene, camera, renderer, controls, raycaster, mouse, ground, grid;
                         }
                     }
                     continue;
+                }
+
+                if ((ud.type === 'human' || ud.type === 'builder') && whirlpools.length > 0) {
+                    if (pullPersonTowardWhirlpools(o)) continue;
                 }
 
                 // --- HUMAN AI: wander near home, occasionally go inside ---
@@ -8942,15 +9625,18 @@ let scene, camera, renderer, controls, raycaster, mouse, ground, grid;
                     // Decide what to do
                     if (ud.task === 'idle') {
                         // Decide build type once — commit to it
-                        if (ud.lumber >= 2 && !ud.buildingType) {
-                            ud.buildingType = Math.random() < 0.3 ? 'skyscraper' : 'house';
+                        if (ud.lumber >= 1 && !ud.buildingType) {
+                            const roll = Math.random();
+                            if (roll < 0.22) ud.buildingType = 'streetlamp';
+                            else if (roll < 0.48) ud.buildingType = 'skyscraper';
+                            else ud.buildingType = 'house';
                         }
-                        const neededLumber = ud.buildingType === 'skyscraper' ? 5 : 3;
+                        const neededLumber = getBuilderLumberCost(ud.buildingType);
 
                         if (ud.lumber >= neededLumber) {
                             // Have enough — pick a build site and go
                             const angle = Math.random() * Math.PI * 2;
-                            const dist = (ud.buildingType === 'skyscraper' ? 20 : 15) + Math.random() * 25;
+                            const dist = (ud.buildingType === 'skyscraper' ? 20 : (ud.buildingType === 'streetlamp' ? 10 : 15)) + Math.random() * 25;
                             ud.buildSite = new THREE.Vector3(
                                 o.position.x + Math.cos(angle) * dist,
                                 0,
@@ -9066,8 +9752,7 @@ let scene, camera, renderer, controls, raycaster, mouse, ground, grid;
                         // Hammer animation
                         o.rotation.z = Math.sin(ud.taskTimer * 0.5) * 0.2;
                         ud.buildProgress += 1;
-                        // Skyscrapers take longer to build (~8 seconds)
-                        const buildTime = ud.buildingType === 'skyscraper' ? 480 : 300;
+                        const buildTime = getBuilderBuildTime(ud.buildingType);
                         if (ud.buildProgress >= buildTime) {
                             // Step back from build site
                             const offset = new THREE.Vector3(o.position.x - ud.buildSite.x, 0, o.position.z - ud.buildSite.z).normalize().multiplyScalar(8);
@@ -9075,7 +9760,7 @@ let scene, camera, renderer, controls, raycaster, mouse, ground, grid;
                             placeObject(type, ud.buildSite);
                             o.position.x = ud.buildSite.x + offset.x;
                             o.position.z = ud.buildSite.z + offset.z;
-                            ud.lumber -= (type === 'skyscraper' ? 5 : 3);
+                            ud.lumber -= getBuilderLumberCost(type);
                             ud.buildSite = null;
                             ud.buildingType = null; // re-roll on next idle
                             ud.task = 'idle';
@@ -9341,6 +10026,10 @@ let scene, camera, renderer, controls, raycaster, mouse, ground, grid;
                 }
 
                 // --- BURNING: panicked running for living entities, char for objects ---
+                if (ud.fireImmune) {
+                    ud.onFire = false;
+                    ud.burnLevel = 0;
+                }
                 if (ud.onFire && !ud.skeleton) {
                     // Living things panic and run when on fire
                     const livingType = (ud.type === 'human' || ud.type === 'builder' ||
@@ -9456,6 +10145,7 @@ let scene, camera, renderer, controls, raycaster, mouse, ground, grid;
                                 if (other.userData.type === 'road') return;
                                 if (other.userData.type === 'invader') return;
                                 if (other.userData.isCorpse) return;
+                                if (!canBurnObject(other)) return;
                                 if (other.userData.type === 'tree' && (other.userData.hasFallen || other.userData.isFalling)) return;
                                 if (!other.userData.onFire && !other.userData.skeleton && other.position.distanceTo(o.position) < 18) {
                                     if (Math.random() < 0.1) other.userData.onFire = true;
@@ -9764,6 +10454,9 @@ let scene, camera, renderer, controls, raycaster, mouse, ground, grid;
                             shatter(o.position, 10, 0x94a3b8, 0.8);
                         } else if (ud.type === 'tree') {
                             shatter(o.position, 8, 0x78350f, 0.6);
+                        } else if (ud.type === 'streetlamp') {
+                            shatter(o.position, 8, 0x334155, 0.7);
+                            shatter(o.position.clone().add(new THREE.Vector3(0, 3, 0)), 4, 0xffd36b, 0.4);
                         } else if (ud.type === 'island') {
                             shatter(o.position, 18, 0xd6b36a, 1.0);
                             shatter(o.position, 10, 0x166534, 0.8);
@@ -9780,8 +10473,8 @@ let scene, camera, renderer, controls, raycaster, mouse, ground, grid;
         }
 
         function setupUI() {
-            const buildIds = ['house', 'skyscraper', 'tree', 'human', 'builder', 'invader', 'animal', 'river', 'island', 'ship', 'mountain', 'eraser'];
-            const destroyIds = ['fire', 'vortex', 'whirlpool', 'quake', 'tsunami', 'volcano', 'lavaflood', 'napalm', 'cluster', 'nuke', 'blackhole', 'meteor', 'cracker', 'monarch', 'battleship', 'mothership', 'leviathan', 'kraken', 'maw'];
+            const buildIds = ['house', 'skyscraper', 'tree', 'streetlamp', 'human', 'builder', 'invader', 'animal', 'river', 'island', 'ship', 'mountain', 'eraser'];
+            const destroyIds = ['fire', 'vortex', 'tornado', 'whirlpool', 'quake', 'tsunami', 'volcano', 'lavaflood', 'napalm', 'cluster', 'nuke', 'blackhole', 'meteor', 'cracker', 'battleship', 'mothership', 'leviathan', 'kraken', 'maw'];
             const ids = [...buildIds, ...destroyIds];
 
             const selectTool = (id, el) => {
@@ -9800,9 +10493,12 @@ let scene, camera, renderer, controls, raycaster, mouse, ground, grid;
                 if (id === 'river') hint = ' · click and drag to draw';
                 if (id === 'island') hint = ' · places a unique tree island';
                 if (id === 'ship') hint = ' · fires cannons at nearby ships';
-                if (id === 'whirlpool') hint = ' · drags ships underwater';
+                if (id === 'vortex') hint = ' · purple cloud lightning storm';
+                if (id === 'tornado') hint = ' · visible funnel that lifts objects';
+                if (id === 'whirlpool') hint = ' · drags ships and people underwater';
                 if (id === 'volcano') hint = ' · tap to erupt';
                 if (id === 'builder') hint = ' · cuts trees and builds houses';
+                if (id === 'streetlamp') hint = ' · lights the village and does not burn';
                 if (id === 'eraser') hint = ' · tap an object to erase';
                 if (id === 'invader') hint = ' · charges your village';
                 if (id === 'animal') hint = ' · random species, wanders';
@@ -9974,6 +10670,7 @@ let scene, camera, renderer, controls, raycaster, mouse, ground, grid;
                 krakens = [];
                 despawnAllGroundMaws();
                 despawnAllTornadoes();
+                despawnAllLightningVortices();
                 despawnAllTsunamis();
                 despawnAllVolcanoes();
                 despawnAllCyclopses();
@@ -10093,6 +10790,7 @@ let scene, camera, renderer, controls, raycaster, mouse, ground, grid;
             motherships.forEach(ms => removeMothership(ms));
             motherships = [];
             despawnAllTornadoes();
+            despawnAllLightningVortices();
             despawnAllTsunamis();
             despawnAllVolcanoes();
             if (typeof despawnAllCyclopses === 'function') despawnAllCyclopses();
@@ -11637,12 +12335,48 @@ let scene, camera, renderer, controls, raycaster, mouse, ground, grid;
         let gameMode = 'menu'; // 'menu', 'simulator', 'survival'
 
         function setupModeScreens() {
+            const studioSplash = document.getElementById('studio-splash');
             const startScreen = document.getElementById('start-screen');
             const modeScreen = document.getElementById('mode-screen');
             const header = document.getElementById('header');
             const toolbar = document.getElementById('toolbar');
             const survivalHud = document.getElementById('survival-hud');
             const survivalControls = document.getElementById('survival-controls');
+            const loadingTip = document.getElementById('studio-loading-tip');
+            const loadingTips = [
+                'Tip: Build first. Destroy later.',
+                'Tip: Rivers can shape where your town survives.',
+                'Tip: Shift-click stacks disaster targets.',
+                'Tip: Survival mode is better with an escape route.',
+                'Tip: Construction mode rewards a closer look.'
+            ];
+            let tipIndex = 0;
+            let splashDone = false;
+            let tipTimer = setInterval(() => {
+                tipIndex = (tipIndex + 1) % loadingTips.length;
+                if (loadingTip) loadingTip.textContent = loadingTips[tipIndex];
+            }, 1800);
+
+            const finishStudioSplash = () => {
+                if (splashDone) return;
+                splashDone = true;
+                clearInterval(tipTimer);
+                studioSplash.classList.add('is-leaving');
+                setTimeout(() => {
+                    studioSplash.classList.add('hidden');
+                    startScreen.classList.remove('hidden');
+                    studioSplash.classList.remove('is-leaving');
+                }, 900);
+            };
+
+            setTimeout(finishStudioSplash, 9100);
+            studioSplash.addEventListener('click', finishStudioSplash);
+            studioSplash.addEventListener('keydown', e => {
+                if (e.key === 'Enter' || e.key === ' ') {
+                    e.preventDefault();
+                    finishStudioSplash();
+                }
+            });
 
             // Start button → mode select
             document.getElementById('btn-start').onclick = () => {
@@ -12817,13 +13551,15 @@ let scene, camera, renderer, controls, raycaster, mouse, ground, grid;
             }
 
             const choices = [
-                'tornado', 'volcano', 'maw', 'kraken', 'leviathan',
+                'tornado', 'vortex', 'volcano', 'maw', 'kraken', 'leviathan',
                 'battleship', 'mothership', 'napalm', 'cluster'
             ];
             const choice = choices[Math.floor(Math.random() * choices.length)];
 
             if (choice === 'tornado') {
                 spawnTornado(targetPt);
+            } else if (choice === 'vortex') {
+                spawnLightningVortex(targetPt);
             } else if (choice === 'volcano') {
                 spawnVolcano(targetPt);
             } else if (choice === 'maw') {

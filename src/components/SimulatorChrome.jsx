@@ -2,6 +2,7 @@ const buildTools = [
   ["btn-house", "btn-blue active", "🏠", "House"],
   ["btn-skyscraper", "btn-blue", "🏢", "Tower"],
   ["btn-tree", "btn-green", "🌲", "Tree"],
+  ["btn-streetlamp", "btn-orange", "💡", "Street Lamp"],
   ["btn-human", "btn-orange", "🏃", "Resident"],
   ["btn-builder", "btn-orange", "👷", "Builder"],
   ["btn-invader", "btn-red", "🏹", "Invader"],
@@ -15,7 +16,8 @@ const buildTools = [
 
 const destroyTools = [
   ["btn-fire", "🔥", "Fire"],
-  ["btn-vortex", "🌪️", "Tornado"],
+  ["btn-vortex", "☁️", "Vortex"],
+  ["btn-tornado", "🌪️", "Tornado"],
   ["btn-whirlpool", "🌀", "Whirlpool"],
   ["btn-quake", "🫨", "Quake"],
   ["btn-tsunami", "🌊", "Tsunami"],
@@ -27,7 +29,6 @@ const destroyTools = [
   ["btn-meteor", "☄️", "Meteor"],
   ["btn-blackhole", "🕳️", "Black Hole"],
   ["btn-cracker", "🪨", "Cracker"],
-  ["btn-monarch", "🐉", "Monarch"],
   ["btn-battleship", "🛸", "Battleship"],
   ["btn-mothership", "🛸", "Mothership"],
   ["btn-leviathan", "🐉", "Leviathan"],

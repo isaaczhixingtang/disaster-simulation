@@ -25,7 +25,22 @@ const modes = [
 export function ModeOverlays() {
   return (
     <>
-      <div id="start-screen" className="overlay-screen">
+      <div id="studio-splash" className="overlay-screen studio-splash" role="button" tabIndex={0}>
+        <div className="studio-logo-wrap" aria-hidden="true">
+          <img src="/assets/isaac3d-gdev-logo.png" alt="" className="studio-logo" />
+        </div>
+        <div className="studio-name">Isaac3D GDev</div>
+        <div className="studio-loading" aria-live="polite">
+          <div className="studio-loading-track" aria-hidden="true">
+            <div className="studio-loading-fill" />
+          </div>
+          <div id="studio-loading-tip" className="studio-loading-tip">
+            Tip: Build first. Destroy later.
+          </div>
+        </div>
+      </div>
+
+      <div id="start-screen" className="overlay-screen hidden">
         <h1>🌍 Disaster Sim</h1>
         <p className="tagline">Build a world. Watch it burn. Or live in it.</p>
         <button className="big-btn" id="btn-start">

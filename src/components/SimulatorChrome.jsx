@@ -34,6 +34,7 @@ const destroyTools = [
   ["btn-leviathan", "🐉", "Leviathan"],
   ["btn-kraken", "🦑", "Kraken"],
   ["btn-maw", "🦷", "Maw"],
+  ["btn-human-eater", "🌿", "Human Eater"],
 ];
 
 function ToolButton({ id, className, icon, label }) {

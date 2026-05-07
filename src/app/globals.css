@@ -221,6 +221,14 @@
             border-color: rgba(96, 165, 250, 0.6);
             box-shadow: 0 20px 50px rgba(96, 165, 250, 0.3);
         }
+        .overlay-screen .survival-type-card:nth-child(1):hover {
+            border-color: rgba(248, 113, 113, 0.72);
+            box-shadow: 0 20px 50px rgba(239, 68, 68, 0.28);
+        }
+        .overlay-screen .survival-type-card:nth-child(2):hover {
+            border-color: rgba(74, 222, 128, 0.72);
+            box-shadow: 0 20px 50px rgba(34, 197, 94, 0.24);
+        }
         .overlay-screen .mode-card .icon { font-size: 4rem; margin-bottom: 12px; }
         .overlay-screen .mode-card h2 { margin: 0 0 12px; font-size: 1.6rem; }
         .overlay-screen .mode-card p { margin: 0; color: #9ca3af; font-size: 0.95rem; line-height: 1.5; }
@@ -229,6 +237,61 @@
             justify-content: center;
             max-width: 800px;
             width: min(100%, 800px);
+        }
+        .how-to-play {
+            width: min(100%, 920px);
+            margin-top: 18px;
+            padding: 22px;
+            border: 1px solid rgba(255,255,255,0.12);
+            border-radius: 18px;
+            background: rgba(2, 6, 23, 0.58);
+            backdrop-filter: blur(12px);
+            text-align: left;
+            box-shadow: 0 18px 50px rgba(0,0,0,0.26);
+        }
+        .how-to-heading {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            margin-bottom: 16px;
+        }
+        .how-to-heading .icon {
+            font-size: 1.5rem;
+            line-height: 1;
+        }
+        .how-to-heading h2 {
+            margin: 0;
+            font-size: clamp(1.25rem, 3vw, 1.7rem);
+            color: #f8fafc;
+        }
+        .how-to-grid {
+            display: grid;
+            grid-template-columns: repeat(2, minmax(0, 1fr));
+            gap: 14px;
+        }
+        .how-to-grid article {
+            min-width: 0;
+            padding: 14px;
+            border-radius: 12px;
+            border: 1px solid rgba(148, 163, 184, 0.18);
+            background: rgba(15, 23, 42, 0.58);
+        }
+        .how-to-grid article.wide {
+            grid-column: 1 / -1;
+        }
+        .how-to-grid h3 {
+            margin: 0 0 8px;
+            color: #fbbf24;
+            font-size: 1rem;
+        }
+        .how-to-grid p {
+            margin: 0;
+            color: #cbd5e1;
+            font-size: 0.9rem;
+            line-height: 1.45;
+        }
+        .how-to-grid p + p {
+            margin-top: 8px;
         }
         .back-btn {
             position: absolute; top: 20px; left: 20px;
@@ -278,6 +341,62 @@
             height: 100%;
             background: linear-gradient(90deg, #ef4444, #f59e0b, #10b981);
             transition: width 0.2s;
+        }
+        #survival-hud .survival-hotbar {
+            display: grid;
+            grid-template-columns: repeat(9, clamp(34px, 4.4vw, 48px));
+            gap: 4px;
+            padding: 4px;
+            background: rgba(0, 0, 0, 0.45);
+            border: 2px solid rgba(255,255,255,0.22);
+            border-radius: 4px;
+            pointer-events: auto;
+            backdrop-filter: blur(8px);
+        }
+        #survival-hud .inventory-slot {
+            position: relative;
+            width: clamp(34px, 4.4vw, 48px);
+            aspect-ratio: 1;
+            display: grid;
+            place-items: center;
+            padding: 0;
+            border: 2px solid #2a2a2a;
+            border-top-color: #f3f4f6;
+            border-left-color: #d1d5db;
+            border-right-color: #111827;
+            border-bottom-color: #111827;
+            border-radius: 2px;
+            background: rgba(107, 114, 128, 0.82);
+            color: #fff;
+            cursor: pointer;
+            font-size: clamp(1.1rem, 2.5vw, 1.55rem);
+            line-height: 1;
+            box-shadow: inset 0 0 0 2px rgba(255,255,255,0.08);
+            touch-action: manipulation;
+        }
+        #survival-hud .inventory-slot.selected {
+            border-color: #f8fafc;
+            box-shadow: 0 0 0 2px #111827, 0 0 0 4px #f8fafc, inset 0 0 0 2px rgba(255,255,255,0.18);
+            background: rgba(156, 163, 175, 0.92);
+            z-index: 1;
+        }
+        #survival-hud .inventory-slot.disabled {
+            cursor: not-allowed;
+            opacity: 0.48;
+            border-color: rgba(255,255,255,0.12);
+            box-shadow: none;
+            background: rgba(75, 85, 99, 0.62);
+            z-index: auto;
+        }
+        #survival-hud .slot-count {
+            position: absolute;
+            right: 3px;
+            bottom: 2px;
+            color: white;
+            font-size: 0.72rem;
+            font-weight: 900;
+            line-height: 1;
+            text-shadow: 0 1px 2px #000, 1px 0 2px #000;
         }
         #survival-hud .exit-btn {
             background: rgba(220, 38, 38, 0.7);
@@ -384,6 +503,32 @@
             max-width: calc(100vw - 32px);
         }
         #survival-message.visible { display: block; }
+        #survival-message .survival-death-title {
+            font-size: clamp(1.7rem, 8vw, 2.6rem);
+            line-height: 1;
+            margin-bottom: 12px;
+        }
+        #survival-message .survival-death-detail {
+            font-size: clamp(0.95rem, 3.5vw, 1.1rem);
+            font-weight: 500;
+            line-height: 1.35;
+            opacity: 0.94;
+        }
+        #survival-message .survival-respawn-btn {
+            margin-top: 20px;
+            border: 0;
+            border-radius: 8px;
+            padding: 11px 22px;
+            background: #f8fafc;
+            color: #991b1b;
+            font-size: 1rem;
+            font-weight: 800;
+            cursor: pointer;
+            box-shadow: 0 10px 22px rgba(0,0,0,0.22);
+        }
+        #survival-message .survival-respawn-btn:hover {
+            background: #fff7ed;
+        }
 
         /* ===== TOP HEADER ===== */
         #header {
@@ -586,6 +731,15 @@
             #survival-hud .stat {
                 font-size: 0.78rem;
                 padding: 7px 8px;
+            }
+            #survival-hud .survival-hotbar {
+                order: 5;
+                grid-template-columns: repeat(9, minmax(29px, 1fr));
+                width: min(100%, 360px);
+            }
+            #survival-hud .inventory-slot {
+                width: 100%;
+                min-width: 0;
             }
             #survival-hud .exit-btn {
                 margin-left: auto;
@@ -822,6 +976,29 @@
             .overlay-screen .mode-card .icon { font-size: 2.4rem; }
             .overlay-screen .mode-card h2 { font-size: 1.25rem; }
             .overlay-screen .mode-card p { font-size: 0.88rem; }
+            .how-to-play {
+                margin-top: 12px;
+                padding: 14px;
+                border-radius: 12px;
+            }
+            .how-to-heading {
+                margin-bottom: 12px;
+            }
+            .how-to-grid {
+                grid-template-columns: 1fr;
+                gap: 10px;
+            }
+            .how-to-grid article {
+                padding: 12px;
+                border-radius: 10px;
+            }
+            .how-to-grid h3 {
+                font-size: 0.95rem;
+            }
+            .how-to-grid p {
+                font-size: 0.84rem;
+                line-height: 1.4;
+            }
             .back-btn {
                 top: max(12px, env(safe-area-inset-top));
                 left: max(12px, env(safe-area-inset-left));

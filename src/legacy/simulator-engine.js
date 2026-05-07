@@ -5,6 +5,7 @@ const THREE = { ...ThreeModule, OrbitControls };
 
 let scene, camera, renderer, controls, raycaster, mouse, ground, grid;
         let worldObjects = [];
+        let worldObjectSet = new Set();
         let debris = [];
         let fireParticles = [];
         let cannonBalls = [];
@@ -30,6 +31,7 @@ let scene, camera, renderer, controls, raycaster, mouse, ground, grid;
         let cooledLavaPools = []; // orphaned cooled pools after stream expires
         let cyclopses = []; // array of { mesh, target, age, lifeMax, ... }
         let groundMaws = []; // array of ground mouths with four dragging tentacles
+        let humanEaters = []; // planted flytrap-like mouths that snap up people
 
         // Day/night cycle: phase 0..1 where 0=midnight, 0.25=sunrise, 0.5=noon, 0.75=sunset
         let dayPhase = 0.35; // start in morning
@@ -40,6 +42,52 @@ let scene, camera, renderer, controls, raycaster, mouse, ground, grid;
         // Resident auto-spawner
         let residentSpawnTimer = 0;
 
+        const PERF = {
+            maxPixelRatio: 1.5,
+            maxDebris: 650,
+            maxFireParticles: 420,
+            softDebrisStart: 360,
+            softParticleStart: 240,
+            highObjectCount: 260
+        };
+        const CHAR_COLOR = new THREE.Color(0x1a1a1a);
+        const TMP_VEC_A = new THREE.Vector3();
+        const DEBRIS_GEOMETRIES = [
+            new THREE.BoxGeometry(0.55, 0.55, 0.55),
+            new THREE.BoxGeometry(0.85, 0.85, 0.85),
+            new THREE.BoxGeometry(1.15, 1.15, 1.15),
+            new THREE.BoxGeometry(1.45, 1.45, 1.45),
+            new THREE.BoxGeometry(1.8, 1.8, 1.8)
+        ];
+        const FIRE_GEOMETRIES = [
+            new THREE.SphereGeometry(0.32, 6, 5),
+            new THREE.SphereGeometry(0.5, 7, 5),
+            new THREE.SphereGeometry(0.72, 8, 6)
+        ];
+
+        function syncWorldObjectSet() {
+            if (worldObjectSet.size !== worldObjects.length) {
+                worldObjectSet = new Set(worldObjects);
+            }
+        }
+
+        function isWorldObject(obj) {
+            syncWorldObjectSet();
+            return worldObjectSet.has(obj);
+        }
+
+        function addWorldObject(obj) {
+            worldObjects.push(obj);
+            worldObjectSet.add(obj);
+        }
+
+        function removeWorldObject(obj) {
+            scene.remove(obj);
+            const idx = worldObjects.indexOf(obj);
+            if (idx >= 0) worldObjects.splice(idx, 1);
+            worldObjectSet.delete(obj);
+        }
+
         function init() {
             scene = new THREE.Scene();
             scene.background = new THREE.Color(0x0f172a);
@@ -48,9 +96,9 @@ let scene, camera, renderer, controls, raycaster, mouse, ground, grid;
             camera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 0.1, 3000);
             camera.position.set(220, 180, 220);
 
-            renderer = new THREE.WebGLRenderer({ antialias: true });
+            renderer = new THREE.WebGLRenderer({ antialias: false, powerPreference: 'high-performance' });
             renderer.setSize(window.innerWidth, window.innerHeight);
-            renderer.setPixelRatio(window.devicePixelRatio);
+            renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, PERF.maxPixelRatio));
             renderer.shadowMap.enabled = true;
             renderer.shadowMap.type = THREE.PCFSoftShadowMap;
             renderer.toneMapping = THREE.ReinhardToneMapping;
@@ -68,8 +116,8 @@ let scene, camera, renderer, controls, raycaster, mouse, ground, grid;
             window.sun = new THREE.DirectionalLight(0xffffff, 1.5);
             window.sun.position.set(100, 300, 100);
             window.sun.castShadow = true;
-            window.sun.shadow.mapSize.width = 2048;
-            window.sun.shadow.mapSize.height = 2048;
+            window.sun.shadow.mapSize.width = 1024;
+            window.sun.shadow.mapSize.height = 1024;
             window.sun.shadow.camera.left = -400;
             window.sun.shadow.camera.right = 400;
             window.sun.shadow.camera.top = 400;
@@ -129,7 +177,7 @@ let scene, camera, renderer, controls, raycaster, mouse, ground, grid;
         }
 
         // Build/destroy tools
-        const DESTROY_TOOLS = new Set(['fire','vortex','tornado','whirlpool','quake','tsunami','volcano','lavaflood','napalm','cluster','nuke','blackhole','meteor','cracker','battleship','mothership','leviathan','kraken','maw']);
+        const DESTROY_TOOLS = new Set(['fire','vortex','tornado','whirlpool','quake','tsunami','volcano','lavaflood','napalm','cluster','nuke','blackhole','meteor','cracker','battleship','mothership','leviathan','kraken','maw','human-eater']);
 
         function addMultiTarget(pt) {
             multiTargets.push(pt.clone());
@@ -197,7 +245,7 @@ let scene, camera, renderer, controls, raycaster, mouse, ground, grid;
                 const hits = raycaster.intersectObjects(worldObjects, true);
                 if (hits.length > 0) {
                     let target = hits[0].object;
-                    while (target && !worldObjects.includes(target)) {
+                    while (target && !isWorldObject(target)) {
                         target = target.parent;
                     }
                     if (target) {
@@ -1331,6 +1379,8 @@ let scene, camera, renderer, controls, raycaster, mouse, ground, grid;
             group.userData.wanderTimer = 0;
             group.userData.idleTimer = 0;
             group.userData.scaleVal = scale;
+            group.userData.survivalPunchesToKill = 4 + Math.floor(Math.random() * 9);
+            group.userData.survivalPunchesTaken = 0;
         }
 
         function buildMountain(group) {
@@ -1998,7 +2048,7 @@ let scene, camera, renderer, controls, raycaster, mouse, ground, grid;
 
             storeOriginalColors(group);
             scene.add(group);
-            worldObjects.push(group);
+            addWorldObject(group);
             if (type === 'streetlamp') updateStreetLampLighting(windowsAreNightMode);
         }
 
@@ -2191,10 +2241,22 @@ let scene, camera, renderer, controls, raycaster, mouse, ground, grid;
 
         // --- DEBRIS: now have HP, can be burned and destroyed ---
         function shatter(pos, count, baseColor, force = 1.0) {
-            for (let i = 0; i < count; i++) {
-                const size = 0.5 + Math.random() * 1.5;
+            const pressure = Math.max(
+                debris.length / PERF.softDebrisStart,
+                fireParticles.length / PERF.softParticleStart,
+                worldObjects.length / PERF.highObjectCount
+            );
+            const budgetLeft = Math.max(0, PERF.maxDebris - debris.length);
+            const scaledCount = Math.min(
+                budgetLeft,
+                Math.max(1, Math.ceil(count / Math.max(1, pressure)))
+            );
+            if (scaledCount <= 0) return;
+
+            for (let i = 0; i < scaledCount; i++) {
+                const geo = DEBRIS_GEOMETRIES[Math.floor(Math.random() * DEBRIS_GEOMETRIES.length)];
                 const mat = new THREE.MeshStandardMaterial({ color: baseColor, transparent: true, opacity: 1.0 });
-                const d = new THREE.Mesh(new THREE.BoxGeometry(size, size, size), mat);
+                const d = new THREE.Mesh(geo, mat);
                 d.position.copy(pos).add(new THREE.Vector3((Math.random()-0.5)*5, Math.random()*4, (Math.random()-0.5)*5));
                 d.userData = {
                     velocity: new THREE.Vector3((Math.random()-0.5)*1.5*force, (1 + Math.random()*2)*force, (Math.random()-0.5)*1.5*force),
@@ -2205,15 +2267,26 @@ let scene, camera, renderer, controls, raycaster, mouse, ground, grid;
                     onFire: false,
                     originalColor: baseColor
                 };
-                d.castShadow = true;
+                d.castShadow = debris.length < PERF.softDebrisStart;
                 scene.add(d);
                 debris.push(d);
             }
         }
 
         function createFireParticle(pos, isSmoke = false) {
+            if (fireParticles.length >= PERF.maxFireParticles) {
+                const old = fireParticles.shift();
+                if (old) scene.remove(old);
+            }
+            const pressure = Math.max(
+                fireParticles.length / PERF.softParticleStart,
+                debris.length / PERF.softDebrisStart,
+                worldObjects.length / PERF.highObjectCount
+            );
+            if (pressure > 1 && Math.random() > 1 / pressure) return;
+
             const p = new THREE.Mesh(
-                new THREE.SphereGeometry(0.3 + Math.random()*0.5),
+                FIRE_GEOMETRIES[Math.floor(Math.random() * FIRE_GEOMETRIES.length)],
                 new THREE.MeshBasicMaterial({
                     color: isSmoke ? 0x444444 : (Math.random() > 0.5 ? 0xff6600 : 0xffcc00),
                     transparent: true, opacity: 0.9
@@ -2249,6 +2322,8 @@ let scene, camera, renderer, controls, raycaster, mouse, ground, grid;
                 spawnKraken(pt);
             } else if (type === 'maw') {
                 spawnGroundMaw(pt);
+            } else if (type === 'human-eater') {
+                spawnHumanEater(pt);
             } else if (type === 'vortex') {
                 spawnLightningVortex(pt);
             } else if (type === 'tornado') {
@@ -2275,8 +2350,7 @@ let scene, camera, renderer, controls, raycaster, mouse, ground, grid;
                     }, i * 200);
                 }
             } else if (type === 'nuke') {
-                explode(pt, 140, 0xffdd88);
-                applyBlast(pt, 600, 50, 14, 5000, true); // overwhelming damage to guarantee shattering
+                launchNukeMissile(pt);
             } else if (type === 'blackhole') {
                 singularityPoint = pt.clone();
                 setTimeout(() => singularityPoint = null, 8000);
@@ -2333,6 +2407,150 @@ let scene, camera, renderer, controls, raycaster, mouse, ground, grid;
                     applyBlast(targetPt, 280, 40, 10, 3000, true);
                     // Clean up remaining trail
                     setTimeout(() => trail.forEach(t => scene.remove(t)), 1500);
+                    return;
+                }
+                requestAnimationFrame(anim);
+            };
+            anim();
+        }
+
+        function createNukeMissileMesh() {
+            const missile = new THREE.Group();
+            const bodyMat = new THREE.MeshStandardMaterial({
+                color: 0xf8fafc,
+                metalness: 0.35,
+                roughness: 0.35
+            });
+            const bandMat = new THREE.MeshStandardMaterial({
+                color: 0xef4444,
+                emissive: 0x330000,
+                emissiveIntensity: 0.2
+            });
+            const darkMat = new THREE.MeshStandardMaterial({
+                color: 0x111827,
+                metalness: 0.45,
+                roughness: 0.4
+            });
+            const flameMat = new THREE.MeshBasicMaterial({
+                color: 0xff8a00,
+                transparent: true,
+                opacity: 0.88
+            });
+
+            const body = new THREE.Mesh(new THREE.CylinderGeometry(2.2, 2.2, 22, 18), bodyMat);
+            body.castShadow = true;
+            missile.add(body);
+
+            const nose = new THREE.Mesh(new THREE.ConeGeometry(2.25, 6, 18), darkMat);
+            nose.position.y = -14;
+            nose.rotation.x = Math.PI;
+            nose.castShadow = true;
+            missile.add(nose);
+
+            const tail = new THREE.Mesh(new THREE.CylinderGeometry(2.6, 2.1, 4, 18), bandMat);
+            tail.position.y = 13;
+            tail.castShadow = true;
+            missile.add(tail);
+
+            for (let i = 0; i < 4; i++) {
+                const fin = new THREE.Mesh(new THREE.BoxGeometry(0.45, 5, 3.6), bandMat);
+                fin.position.set(0, 8, 2.9);
+                fin.rotation.y = i * Math.PI / 2;
+                fin.castShadow = true;
+                missile.add(fin);
+            }
+
+            const flame = new THREE.Mesh(new THREE.ConeGeometry(1.7, 8, 14), flameMat);
+            flame.position.y = 19;
+            flame.userData.isFlame = true;
+            missile.add(flame);
+
+            missile.scale.setScalar(1.2);
+            missile.rotation.z = Math.PI;
+            return missile;
+        }
+
+        function launchNukeMissile(targetPt) {
+            const impact = targetPt.clone();
+            const missile = createNukeMissileMesh();
+            missile.position.set(impact.x, 520, impact.z);
+            scene.add(missile);
+            showMessage('Nuclear missile inbound');
+
+            const trail = [];
+            const descentSpeed = 9.5;
+            const impactY = Math.max(impact.y + 7, 7);
+
+            const anim = () => {
+                missile.position.y -= descentSpeed;
+                missile.rotation.y += 0.025;
+
+                const flame = missile.children.find(child => child.userData && child.userData.isFlame);
+                if (flame) {
+                    const flicker = 0.85 + Math.random() * 0.35;
+                    flame.scale.set(flicker, 0.9 + Math.random() * 0.35, flicker);
+                    flame.material.opacity = 0.68 + Math.random() * 0.25;
+                }
+
+                if (Math.random() < 0.85) {
+                    const smoke = new THREE.Mesh(
+                        new THREE.SphereGeometry(2.4 + Math.random() * 2.4, 8, 6),
+                        new THREE.MeshBasicMaterial({
+                            color: Math.random() < 0.25 ? 0xffaa44 : 0x57534e,
+                            transparent: true,
+                            opacity: 0.62
+                        })
+                    );
+                    smoke.position.copy(missile.position).add(new THREE.Vector3(
+                        (Math.random() - 0.5) * 2.4,
+                        18 + Math.random() * 6,
+                        (Math.random() - 0.5) * 2.4
+                    ));
+                    smoke.userData = {
+                        life: 1,
+                        vel: new THREE.Vector3((Math.random() - 0.5) * 0.16, 0.45 + Math.random() * 0.22, (Math.random() - 0.5) * 0.16)
+                    };
+                    scene.add(smoke);
+                    trail.push(smoke);
+                }
+
+                for (let i = trail.length - 1; i >= 0; i--) {
+                    const smoke = trail[i];
+                    smoke.position.add(smoke.userData.vel);
+                    smoke.userData.life -= 0.014;
+                    smoke.material.opacity = Math.max(0, smoke.userData.life * 0.62);
+                    smoke.scale.multiplyScalar(1.018);
+                    if (smoke.userData.life <= 0) {
+                        scene.remove(smoke);
+                        smoke.geometry.dispose();
+                        smoke.material.dispose();
+                        trail.splice(i, 1);
+                    }
+                }
+
+                if (missile.position.y <= impactY) {
+                    scene.remove(missile);
+                    disposeObjectTree(missile);
+
+                    explode(impact, 140, 0xffdd88);
+                    explode(impact.clone().setY(impact.y + 16), 90, 0xfff3c4);
+                    applyBlast(impact, 600, 50, 14, 5000, true); // overwhelming damage to guarantee shattering
+                    igniteRadius(impact, 150);
+                    survivalDamageAtPoint(impact, 220, 100, 'nuclear blast', 1600);
+                    addSurvivalHazard('nuclearFallout', impact, 180, 12000);
+
+                    const flash = new THREE.PointLight(0xfff2b0, 8, 520);
+                    flash.position.set(impact.x, 45, impact.z);
+                    scene.add(flash);
+                    setTimeout(() => scene.remove(flash), 180);
+                    setTimeout(() => {
+                        trail.forEach(smoke => {
+                            scene.remove(smoke);
+                            smoke.geometry.dispose();
+                            smoke.material.dispose();
+                        });
+                    }, 1800);
+                    showMessage('Nuke impact');
                     return;
                 }
                 requestAnimationFrame(anim);
@@ -2516,9 +2734,7 @@ let scene, camera, renderer, controls, raycaster, mouse, ground, grid;
             } else {
                 shatter(pos.clone().add(new THREE.Vector3(0, 1, 0)), 10, 0x1f2937, force * 0.6);
             }
-            scene.remove(obj);
-            const idx = worldObjects.indexOf(obj);
-            if (idx >= 0) worldObjects.splice(idx, 1);
+            removeWorldObject(obj);
         }
 
         function strikeLightningAt(vortex, targetPt) {
@@ -2539,8 +2755,7 @@ let scene, camera, renderer, controls, raycaster, mouse, ground, grid;
 
             worldObjects.slice().forEach(obj => {
                 if (!obj.userData || obj.userData.type === 'road') return;
-                const d = obj.position.distanceTo(end);
-                if (d > 11) return;
+                if (obj.position.distanceToSquared(end) > 121) return;
 
                 const ud = obj.userData;
                 if (ud.type === 'human' || ud.type === 'builder') {
@@ -2561,7 +2776,7 @@ let scene, camera, renderer, controls, raycaster, mouse, ground, grid;
             });
 
             debris.forEach(d => {
-                if (d.position.distanceTo(end) > 12) return;
+                if (d.position.distanceToSquared(end) > 144) return;
                 d.userData.onFire = true;
                 d.userData.hp -= 80;
                 d.userData.velocity.add(new THREE.Vector3((Math.random() - 0.5) * 2.5, 1.8, (Math.random() - 0.5) * 2.5));
@@ -3987,7 +4202,7 @@ let scene, camera, renderer, controls, raycaster, mouse, ground, grid;
                 for (let mi = bs.missiles.length - 1; mi >= 0; mi--) {
                     const m = bs.missiles[mi];
                     m.age++;
-                    if (!m.target || !worldObjects.includes(m.target) || m.target.userData.hp <= 0) {
+                    if (!m.target || !isWorldObject(m.target) || m.target.userData.hp <= 0) {
                         m.target = findBattleshipMissileTarget(bs);
                     }
                     const targetPos = (m.target ? m.target.position : bs.target).clone();
@@ -5029,7 +5244,7 @@ let scene, camera, renderer, controls, raycaster, mouse, ground, grid;
 
                     if (maw.phase === 'attack') {
                         const targetIsSurvivalPlayer = tentacle.target && tentacle.target.userData && tentacle.target.userData.type === 'player';
-                        if (!tentacle.target || (!targetIsSurvivalPlayer && !worldObjects.includes(tentacle.target))) releaseMawTarget(tentacle);
+                        if (!tentacle.target || (!targetIsSurvivalPlayer && !isWorldObject(tentacle.target))) releaseMawTarget(tentacle);
                         if (!tentacle.target && tentacle.stateTimer > 25) {
                             const target = findMawTarget(maw, tentacle);
                             if (target) {
@@ -5096,6 +5311,372 @@ let scene, camera, renderer, controls, raycaster, mouse, ground, grid;
                         tentacle.stateTimer = 0;
                     }
                 });
+            }
+        }
+
+        // ===== HUMAN EATER: a giant flytrap that bends, opens, snaps, and swallows people =====
+        function spawnHumanEater(pt) {
+            const root = new THREE.Group();
+            root.position.set(pt.x, 0, pt.z);
+            scene.add(root);
+
+            const stemMat = new THREE.MeshStandardMaterial({ color: 0x08783c, roughness: 0.72 });
+            const leafMat = new THREE.MeshStandardMaterial({ color: 0x1f7a32, roughness: 0.78 });
+            const upperJawMat = new THREE.MeshStandardMaterial({
+                color: 0xffd7f1,
+                roughness: 0.68,
+                emissive: 0x4f1238,
+                emissiveIntensity: 0.08
+            });
+            const lowerJawMat = new THREE.MeshStandardMaterial({ color: 0x9a5d78, roughness: 0.74 });
+            const innerMat = new THREE.MeshStandardMaterial({ color: 0x5b253f, roughness: 0.74 });
+            const toothMat = new THREE.MeshStandardMaterial({ color: 0xfff6d6, roughness: 0.45 });
+            const spotMat = new THREE.MeshStandardMaterial({ color: 0xff8fd2, roughness: 0.6 });
+            const thornMat = new THREE.MeshStandardMaterial({ color: 0xcff766, roughness: 0.55 });
+
+            const mound = new THREE.Mesh(new THREE.CylinderGeometry(5, 6.5, 1, 24), leafMat);
+            mound.position.y = 0.45;
+            mound.castShadow = true;
+            mound.receiveShadow = true;
+            root.add(mound);
+
+            for (let i = 0; i < 7; i++) {
+                const a = (i / 7) * Math.PI * 2;
+                const leaf = new THREE.Mesh(new THREE.SphereGeometry(1.8, 10, 6), leafMat.clone());
+                leaf.scale.set(2.4 + Math.random() * 1.4, 0.18, 0.75);
+                leaf.position.set(Math.cos(a) * 4.3, 0.35, Math.sin(a) * 4.3);
+                leaf.rotation.y = -a;
+                leaf.rotation.z = (Math.random() - 0.5) * 0.25;
+                leaf.castShadow = true;
+                root.add(leaf);
+            }
+
+            const stemPivot = new THREE.Group();
+            stemPivot.position.y = 0.7;
+            root.add(stemPivot);
+
+            const stemLength = 15;
+            const stemCurve = new THREE.CatmullRomCurve3([
+                new THREE.Vector3(0, 0, 0),
+                new THREE.Vector3(0, 5.4, 0.6),
+                new THREE.Vector3(0, 10.8, 2.3),
+                new THREE.Vector3(0, stemLength, 4.2)
+            ]);
+            const stem = new THREE.Mesh(new THREE.TubeGeometry(stemCurve, 24, 0.78, 12, false), stemMat);
+            stem.castShadow = true;
+            stemPivot.add(stem);
+
+            for (let i = 0; i < 5; i++) {
+                const p = stemCurve.getPoint((i + 1) / 7);
+                const side = i % 2 === 0 ? -1 : 1;
+                const thorn = new THREE.Mesh(new THREE.ConeGeometry(0.18, 1.1, 5), thornMat.clone());
+                thorn.position.copy(p);
+                thorn.position.x = side * 0.55;
+                thorn.rotation.z = side > 0 ? -Math.PI / 2.4 : Math.PI / 2.4;
+                thorn.rotation.y = 0.35;
+                thorn.castShadow = true;
+                stemPivot.add(thorn);
+            }
+
+            const head = new THREE.Group();
+            head.position.set(0, stemLength, 4.2);
+            stemPivot.add(head);
+
+            const upperJaw = new THREE.Group();
+            const lowerJaw = new THREE.Group();
+            head.add(upperJaw);
+            head.add(lowerJaw);
+
+            const upperOuter = new THREE.Mesh(new THREE.SphereGeometry(2.85, 22, 12), upperJawMat.clone());
+            upperOuter.scale.set(1.22, 0.42, 0.98);
+            upperOuter.position.set(0, 0.55, 0.62);
+            upperOuter.castShadow = true;
+            upperJaw.add(upperOuter);
+
+            const lowerOuter = new THREE.Mesh(new THREE.SphereGeometry(2.65, 20, 10), lowerJawMat.clone());
+            lowerOuter.scale.set(1.12, 0.5, 0.92);
+            lowerOuter.position.set(0, -0.5, 0.65);
+            lowerOuter.castShadow = true;
+            lowerJaw.add(lowerOuter);
+
+            const hinge = new THREE.Mesh(new THREE.SphereGeometry(1.4, 14, 8), stemMat.clone());
+            hinge.scale.set(1.2, 0.75, 0.85);
+            hinge.position.set(0, 0.05, -1.15);
+            hinge.castShadow = true;
+            head.add(hinge);
+
+            const upperInner = new THREE.Mesh(new THREE.SphereGeometry(2.1, 14, 8), innerMat.clone());
+            upperInner.scale.set(1.15, 0.14, 0.68);
+            upperInner.position.set(0, 0.17, 0.75);
+            upperJaw.add(upperInner);
+
+            const lowerInner = new THREE.Mesh(new THREE.SphereGeometry(2.1, 14, 8), innerMat.clone());
+            lowerInner.scale.set(1.15, 0.14, 0.68);
+            lowerInner.position.set(0, -0.17, 0.75);
+            lowerJaw.add(lowerInner);
+
+            for (let i = 0; i < 5; i++) {
+                const spot = new THREE.Mesh(new THREE.SphereGeometry(0.22 + Math.random() * 0.12, 8, 5), spotMat.clone());
+                spot.scale.set(1.3, 0.18, 0.8);
+                spot.position.set(-1.6 + i * 0.8, 1.64 + Math.random() * 0.08, 0.35 + Math.random() * 0.95);
+                spot.rotation.x = 0.15;
+                upperJaw.add(spot);
+            }
+
+            for (let i = 0; i < 7; i++) {
+                const x = -2.35 + i * 0.78;
+                const len = i === 3 ? 1.7 : 1.1 + Math.random() * 0.45;
+                const upperTooth = new THREE.Mesh(new THREE.ConeGeometry(0.22, len, 5), toothMat.clone());
+                upperTooth.position.set(x, -0.12, 2.25);
+                upperTooth.rotation.z = Math.PI;
+                upperTooth.rotation.x = (x / 2.7) * 0.22;
+                upperJaw.add(upperTooth);
+
+                const lowerTooth = new THREE.Mesh(new THREE.ConeGeometry(0.18, len * 0.72, 5), toothMat.clone());
+                lowerTooth.position.set(x * 0.92, 0.1, 2.18);
+                lowerTooth.rotation.x = -(x / 2.7) * 0.18;
+                lowerJaw.add(lowerTooth);
+            }
+
+            for (let side = -1; side <= 1; side += 2) {
+                for (let i = 0; i < 4; i++) {
+                    const y = 0.8 - i * 0.55;
+                    const spike = new THREE.Mesh(new THREE.ConeGeometry(0.15, 0.9, 5), toothMat.clone());
+                    spike.position.set(side * (2.55 - i * 0.12), y, 1.35 + i * 0.22);
+                    spike.rotation.z = side > 0 ? -Math.PI / 2 : Math.PI / 2;
+                    head.add(spike);
+                }
+            }
+
+            const light = new THREE.PointLight(0x72ff78, 1.7, 55);
+            light.position.set(pt.x, 12, pt.z);
+            scene.add(light);
+
+            humanEaters.push({
+                root,
+                stemPivot,
+                head,
+                upperJaw,
+                lowerJaw,
+                light,
+                pt: pt.clone(),
+                target: null,
+                age: 0,
+                phase: 'search',
+                phaseTimer: 0,
+                stemLength,
+                jawOpen: 0,
+                bend: 0,
+                radius: 24,
+                strikes: 0,
+                maxStrikes: 3,
+                lifeMax: 1200,
+                fadeFrames: 80,
+                idleAngle: Math.random() * Math.PI * 2
+            });
+
+            explode(pt, 12, 0x2f8f3a);
+            showMessage('Human Eater planted: it will feed for 20 seconds');
+        }
+
+        function findHumanEaterTarget(eater) {
+            let best = null;
+            let bestDist = Infinity;
+            worldObjects.forEach(obj => {
+                if (!obj || !obj.userData) return;
+                if (obj.userData.type !== 'human' && obj.userData.type !== 'builder') return;
+                if (obj.userData.hp <= 0 || obj.userData.isCorpse || obj.userData.hidden || obj.userData.beingGrabbed) return;
+                const dx = obj.position.x - eater.pt.x;
+                const dz = obj.position.z - eater.pt.z;
+                const dist = Math.sqrt(dx * dx + dz * dz);
+                if (dist < eater.radius && dist < bestDist) {
+                    best = obj;
+                    bestDist = dist;
+                }
+            });
+            return best;
+        }
+
+        function releaseHumanEaterTarget(eater) {
+            if (eater.target && eater.target.userData) {
+                eater.target.userData.beingGrabbed = false;
+                eater.target.userData.frozen = false;
+            }
+        }
+
+        function beginHumanEaterWither(eater) {
+            releaseHumanEaterTarget(eater);
+            eater.target = null;
+            eater.phase = 'wither';
+            eater.phaseTimer = 0;
+        }
+
+        function removeHumanEater(eater) {
+            releaseHumanEaterTarget(eater);
+            scene.remove(eater.root);
+            scene.remove(eater.light);
+            eater.root.traverse(c => {
+                if (!c.isMesh) return;
+                if (c.geometry) c.geometry.dispose();
+                if (Array.isArray(c.material)) c.material.forEach(m => m.dispose());
+                else if (c.material) c.material.dispose();
+            });
+        }
+
+        function despawnAllHumanEaters() {
+            humanEaters.forEach(removeHumanEater);
+            humanEaters = [];
+        }
+
+        function eatHumanEaterTarget(eater) {
+            const target = eater.target;
+            if (!target) return;
+            releaseHumanEaterTarget(eater);
+            scene.remove(target);
+            const idx = worldObjects.indexOf(target);
+            if (idx >= 0) worldObjects.splice(idx, 1);
+            eater.target = null;
+            eater.strikes++;
+            eater.phase = 'chomp';
+            eater.phaseTimer = 0;
+            eater.light.intensity = 4;
+            for (let i = 0; i < 8; i++) {
+                createFireParticle(eater.pt.clone().add(new THREE.Vector3((Math.random() - 0.5) * 4, 7 + Math.random() * 3, (Math.random() - 0.5) * 4)), true);
+            }
+        }
+
+        function suckHumanEaterTarget(eater, mouthPos) {
+            const target = eater.target;
+            if (!target || !target.userData) return false;
+
+            const toMouth = new THREE.Vector3().subVectors(mouthPos, target.position);
+            const d = toMouth.length();
+            if (d < 0.01) return true;
+
+            const phasePull = eater.phase === 'bend' ? 0.075 : eater.phase === 'open' ? 0.16 : 0.32;
+            const closeBoost = THREE.MathUtils.clamp((18 - d) / 18, 0, 1) * 0.18;
+            const pull = Math.min(0.54, phasePull + closeBoost);
+            target.position.add(toMouth.multiplyScalar(pull));
+            target.position.y = Math.max(0, target.position.y);
+            target.rotation.y += 0.16 + pull * 0.55;
+            target.rotation.z = Math.sin(eater.age * 0.42) * Math.min(0.85, pull * 2.8);
+
+            if (d < 7.5) {
+                const sc = Math.max(0.18, target.scale.x * (0.985 - pull * 0.035));
+                target.scale.set(sc, sc, sc);
+            }
+
+            if (Math.random() < (eater.phase === 'open' ? 0.5 : 0.28)) {
+                const streamPos = target.position.clone().lerp(mouthPos, 0.35 + Math.random() * 0.45);
+                streamPos.x += (Math.random() - 0.5) * 1.3;
+                streamPos.y += Math.random() * 1.6;
+                streamPos.z += (Math.random() - 0.5) * 1.3;
+                createFireParticle(streamPos, true);
+            }
+
+            return d < 2.4 || target.scale.x < 0.22;
+        }
+
+        function updateHumanEaters() {
+            for (let i = humanEaters.length - 1; i >= 0; i--) {
+                const eater = humanEaters[i];
+                eater.age++;
+                eater.phaseTimer++;
+
+                if (eater.phase !== 'wither' && eater.age >= eater.lifeMax - eater.fadeFrames) {
+                    beginHumanEaterWither(eater);
+                }
+
+                if (eater.target && (!isWorldObject(eater.target) || eater.target.userData.hp <= 0 || eater.target.userData.isCorpse)) {
+                    releaseHumanEaterTarget(eater);
+                    eater.target = null;
+                    eater.phase = 'search';
+                    eater.phaseTimer = 0;
+                }
+
+                if (eater.phase === 'search') {
+                    eater.target = findHumanEaterTarget(eater);
+                    if (eater.target) {
+                        eater.target.userData.beingGrabbed = true;
+                        eater.target.userData.frozen = true;
+                        eater.phase = 'bend';
+                        eater.phaseTimer = 0;
+                    }
+                } else if (eater.phase === 'bend' && eater.phaseTimer > 48) {
+                    eater.phase = 'open';
+                    eater.phaseTimer = 0;
+                } else if (eater.phase === 'open' && eater.phaseTimer > 30) {
+                    eater.phase = 'snap';
+                    eater.phaseTimer = 0;
+                    if (eater.target) eater.target.userData.frozen = true;
+                } else if (eater.phase === 'snap' && eater.phaseTimer > 14) {
+                    eatHumanEaterTarget(eater);
+                } else if (eater.phase === 'chomp' && eater.phaseTimer > 78) {
+                    eater.phase = 'search';
+                    eater.phaseTimer = 0;
+                } else if (eater.phase === 'wither' && (eater.phaseTimer > eater.fadeFrames || eater.age >= eater.lifeMax)) {
+                    removeHumanEater(eater);
+                    humanEaters.splice(i, 1);
+                    continue;
+                }
+
+                let desiredAngle = eater.idleAngle + Math.sin(eater.age * 0.025) * 0.35;
+                let targetDist = 0;
+                if (eater.target) {
+                    const dx = eater.target.position.x - eater.pt.x;
+                    const dz = eater.target.position.z - eater.pt.z;
+                    desiredAngle = Math.atan2(dx, dz);
+                    targetDist = Math.sqrt(dx * dx + dz * dz);
+                }
+                let yawDiff = desiredAngle - eater.root.rotation.y;
+                while (yawDiff > Math.PI) yawDiff -= Math.PI * 2;
+                while (yawDiff < -Math.PI) yawDiff += Math.PI * 2;
+                eater.root.rotation.y += yawDiff * 0.12;
+
+                let bendGoal = 0.08 + Math.sin(eater.age * 0.035) * 0.04;
+                if (eater.phase === 'wither') {
+                    bendGoal = 0.05;
+                } else if (eater.target) {
+                    const reach = Math.max(0.1, targetDist - 4.2);
+                    bendGoal = Math.min(1.34, Math.max(0.42, Math.asin(Math.min(0.98, reach / eater.stemLength))));
+                    if (eater.phase === 'open' || eater.phase === 'snap' || eater.phase === 'chomp') bendGoal += 0.12;
+                }
+                eater.bend += (bendGoal - eater.bend) * 0.16;
+                eater.stemPivot.rotation.x = eater.bend;
+
+                let openGoal = 0.18;
+                if (eater.phase === 'bend') openGoal = 0.26;
+                if (eater.phase === 'open') openGoal = 1.05;
+                if (eater.phase === 'snap') openGoal = 0.02;
+                if (eater.phase === 'chomp') {
+                    const chewPulse = Math.max(0, Math.sin(eater.phaseTimer * 0.52));
+                    openGoal = 0.04 + chewPulse * 0.42;
+                }
+                if (eater.phase === 'wither') openGoal = 0.03;
+                eater.jawOpen += (openGoal - eater.jawOpen) * (eater.phase === 'snap' || eater.phase === 'chomp' ? 0.65 : 0.2);
+                eater.upperJaw.rotation.x = -eater.jawOpen;
+                eater.lowerJaw.rotation.x = eater.jawOpen;
+                eater.head.rotation.z = Math.sin(eater.age * 0.09) * (eater.phase === 'chomp' ? 0.2 : 0.05);
+
+                if (eater.target && (eater.phase === 'bend' || eater.phase === 'open' || eater.phase === 'snap')) {
+                    const mouthPos = new THREE.Vector3();
+                    eater.head.getWorldPosition(mouthPos);
+                    if (suckHumanEaterTarget(eater, mouthPos)) {
+                        eatHumanEaterTarget(eater);
+                    }
+                }
+
+                if (eater.phase === 'wither') {
+                    const p = Math.min(1, eater.phaseTimer / 80);
+                    eater.root.scale.setScalar(1 - p * 0.92);
+                    eater.root.position.y = -p * 1.8;
+                    eater.light.intensity = Math.max(0, eater.light.intensity * 0.9);
+                } else {
+                    eater.light.intensity = Math.max(0.6, eater.light.intensity * 0.94);
+                    const mouthPos = new THREE.Vector3();
+                    eater.head.getWorldPosition(mouthPos);
+                    eater.light.position.copy(mouthPos);
+                }
             }
         }
 
@@ -5343,7 +5924,7 @@ let scene, camera, renderer, controls, raycaster, mouse, ground, grid;
                     arrow.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), dir.normalize());
                 }
                 const targetCrew = ud.targetCrew;
-                if (targetCrew && !targetCrew.userData.dead && !targetCrew.userData.overboard && targetCrew.parent && ud.targetShip && worldObjects.includes(ud.targetShip)) {
+                if (targetCrew && !targetCrew.userData.dead && !targetCrew.userData.overboard && targetCrew.parent && ud.targetShip && isWorldObject(ud.targetShip)) {
                     const targetPos = shipWorldPoint(ud.targetShip, targetCrew.position).add(new THREE.Vector3(0, 0.65, 0));
                     if (arrow.position.distanceTo(targetPos) < 1.25) {
                         killShipCrewMember(ud.targetShip, targetCrew);
@@ -5592,7 +6173,7 @@ let scene, camera, renderer, controls, raycaster, mouse, ground, grid;
             for (let i = boardingActions.length - 1; i >= 0; i--) {
                 const action = boardingActions[i];
                 const { a, b } = action;
-                const invalid = !worldObjects.includes(a) || !worldObjects.includes(b) || a.userData.sinking || b.userData.sinking || a.userData.hp <= 0 || b.userData.hp <= 0;
+                const invalid = !isWorldObject(a) || !isWorldObject(b) || a.userData.sinking || b.userData.sinking || a.userData.hp <= 0 || b.userData.hp <= 0;
                 const dist = invalid ? Infinity : a.position.distanceTo(b.position);
                 const aCrew = invalid ? [] : livingShipCrew(a);
                 const bCrew = invalid ? [] : livingShipCrew(b);
@@ -6316,6 +6897,8 @@ let scene, camera, renderer, controls, raycaster, mouse, ground, grid;
             worldObjects = [];
             debris.forEach(d => scene.remove(d));
             debris = [];
+            survivalDroppedItems.forEach(drop => scene.remove(drop.mesh));
+            survivalDroppedItems = [];
             fireParticles.forEach(f => scene.remove(f));
             fireParticles = [];
             shipSwimmers.forEach(s => scene.remove(s));
@@ -6810,10 +7393,15 @@ let scene, camera, renderer, controls, raycaster, mouse, ground, grid;
         }
 
         function applyBlast(center, radius, force, lift, damage, heat = false, excludeCyclopses = false) {
+            const radiusSq = radius * radius;
             worldObjects.forEach(obj => {
                 if (obj.userData.frozen) return;   // CORPSES DON'T REACT
-                const d = obj.position.distanceTo(center);
-                if (d >= radius) return;
+                const dx = obj.position.x - center.x;
+                const dy = obj.position.y - center.y;
+                const dz = obj.position.z - center.z;
+                const distSq = dx * dx + dy * dy + dz * dz;
+                if (distSq >= radiusSq) return;
+                const d = Math.sqrt(distSq);
                 const p = 1 - (d/radius);
                 if (obj.userData.isStatic) {
                     // Static objects (roads, mountains) don't move from blasts but mountains
@@ -6825,10 +7413,11 @@ let scene, camera, renderer, controls, raycaster, mouse, ground, grid;
                     }
                     return;
                 }
-                obj.userData.velocity.add(
-                    new THREE.Vector3().subVectors(obj.position, center).normalize().multiplyScalar(p * force)
-                        .add(new THREE.Vector3(0, p * lift, 0))
-                );
+                TMP_VEC_A.set(dx, dy, dz);
+                if (TMP_VEC_A.lengthSq() > 0.0001) TMP_VEC_A.normalize();
+                TMP_VEC_A.multiplyScalar(p * force);
+                TMP_VEC_A.y += p * lift;
+                obj.userData.velocity.add(TMP_VEC_A);
                 // Humans are fragile — anything inside the blast radius is fatal.
                 if ((obj.userData.type === 'human' || obj.userData.type === 'builder')) {
                     obj.userData.hp = 0;
@@ -6843,13 +7432,18 @@ let scene, camera, renderer, controls, raycaster, mouse, ground, grid;
             });
             // Debris also gets blown around
             debris.forEach(d => {
-                const dist = d.position.distanceTo(center);
-                if (dist < radius) {
+                const dx = d.position.x - center.x;
+                const dy = d.position.y - center.y;
+                const dz = d.position.z - center.z;
+                const distSq = dx * dx + dy * dy + dz * dz;
+                if (distSq < radiusSq) {
+                    const dist = Math.sqrt(distSq);
                     const p = 1 - (dist/radius);
-                    d.userData.velocity.add(
-                        new THREE.Vector3().subVectors(d.position, center).normalize().multiplyScalar(p * force * 0.6)
-                            .add(new THREE.Vector3(0, p * lift * 0.5, 0))
-                    );
+                    TMP_VEC_A.set(dx, dy, dz);
+                    if (TMP_VEC_A.lengthSq() > 0.0001) TMP_VEC_A.normalize();
+                    TMP_VEC_A.multiplyScalar(p * force * 0.6);
+                    TMP_VEC_A.y += p * lift * 0.5;
+                    d.userData.velocity.add(TMP_VEC_A);
                     d.userData.settled = false;
                     d.userData.hp -= p * damage * 0.3;
                     if (heat && Math.random() < p * 0.5) d.userData.onFire = true;
@@ -6859,8 +7453,9 @@ let scene, camera, renderer, controls, raycaster, mouse, ground, grid;
             if (!excludeCyclopses) {
                 cyclopses.forEach(c => {
                     if (c.state === 'dying' || c.state === 'dead') return;
-                    const dist = c.mesh.position.distanceTo(center);
-                    if (dist < radius) {
+                    const distSq = c.mesh.position.distanceToSquared(center);
+                    if (distSq < radiusSq) {
+                        const dist = Math.sqrt(distSq);
                         const p = 1 - (dist / radius);
                         c.hp -= p * damage * 0.6; // resilient but not invincible
                         if (heat && Math.random() < p * 0.4) c.onFire = true;
@@ -7036,13 +7631,11 @@ let scene, camera, renderer, controls, raycaster, mouse, ground, grid;
             storeOriginalColors(halfB);
             scene.add(halfA);
             scene.add(halfB);
-            worldObjects.push(halfA);
-            worldObjects.push(halfB);
+            addWorldObject(halfA);
+            addWorldObject(halfB);
 
             // Remove original house
-            scene.remove(house);
-            const idx = worldObjects.indexOf(house);
-            if (idx >= 0) worldObjects.splice(idx, 1);
+            removeWorldObject(house);
         }
 
         function explode(pt, r, color) {
@@ -7983,6 +8576,7 @@ let scene, camera, renderer, controls, raycaster, mouse, ground, grid;
 
         function animate() {
             requestAnimationFrame(animate);
+            syncWorldObjectSet();
             applyFlyCamera();
             // OrbitControls only active in survival (unused) — fly camera handles sim/construction
             if (gameMode === 'survival') controls.update();
@@ -8007,21 +8601,24 @@ let scene, camera, renderer, controls, raycaster, mouse, ground, grid;
             updateLeviathans();
             updateKrakens();
             updateGroundMaws();
+            updateHumanEaters();
             updateConstruction();
-            updateTour();
             updateTour();
 
             // Auto-spawn residents periodically — but cap at ~2 per house
             residentSpawnTimer++;
             if (residentSpawnTimer >= 360) { // every ~6 seconds
                 residentSpawnTimer = 0;
-                const houses = worldObjects.filter(o =>
-                    o.userData.type === 'house' && o.userData.hp > 0 && !o.userData.skeleton
-                );
+                const houses = [];
+                let residentCount = 0;
+                for (const o of worldObjects) {
+                    if (o.userData.type === 'house' && o.userData.hp > 0 && !o.userData.skeleton) {
+                        houses.push(o);
+                    } else if (o.userData.type === 'human' && !o.userData.isCorpse && o.userData.hp > 0) {
+                        residentCount++;
+                    }
+                }
                 if (houses.length > 0) {
-                    const residentCount = worldObjects.filter(o =>
-                        o.userData.type === 'human' && !o.userData.isCorpse && o.userData.hp > 0
-                    ).length;
                     const targetCap = houses.length * 2;
                     if (residentCount < targetCap) {
                         // Pick a random house, spawn a resident at its doorstep
@@ -8797,7 +9394,7 @@ let scene, camera, renderer, controls, raycaster, mouse, ground, grid;
                 const eyeWorld = new THREE.Vector3();
                 c.eyePivot.getWorldPosition(eyeWorld);
                 let lookAt;
-                if (c.target && worldObjects.includes(c.target) && c.target.userData.hp > 0) {
+                if (c.target && isWorldObject(c.target) && c.target.userData.hp > 0) {
                     lookAt = c.target.position.clone();
                     lookAt.y = c.target.position.y + 1;
                 } else {
@@ -8839,7 +9436,7 @@ let scene, camera, renderer, controls, raycaster, mouse, ground, grid;
 
                 if (c.state === 'walking') {
                     // Validate / refresh target
-                    if (!c.target || !worldObjects.includes(c.target) || c.target.userData.hp <= 0 || c.target.userData.frozen) {
+                    if (!c.target || !isWorldObject(c.target) || c.target.userData.hp <= 0 || c.target.userData.frozen) {
                         c.target = findCyclopsTarget(c);
                     }
 
@@ -8927,7 +9524,7 @@ let scene, camera, renderer, controls, raycaster, mouse, ground, grid;
                     } else if (t === 35) {
                         // SLAM!
                         const target = c.target;
-                        if (target && worldObjects.includes(target)) {
+                        if (target && isWorldObject(target)) {
                             // For big targets (mountains), the club lands at the edge nearest the cyclops,
                             // not at the target's center. Move the smash position toward the cyclops.
                             const targetRadius = (target.userData.footprint || 4) / 2;
@@ -9099,7 +9696,7 @@ let scene, camera, renderer, controls, raycaster, mouse, ground, grid;
                     if (Math.random() < 0.3) createFireParticle(d.position);
                     // Char it
                     if (d.material.color) {
-                        d.material.color.lerp(new THREE.Color(0x1a1a1a), 0.02);
+                        d.material.color.lerp(CHAR_COLOR, 0.02);
                     }
                 }
 
@@ -9159,7 +9756,7 @@ let scene, camera, renderer, controls, raycaster, mouse, ground, grid;
                         ud.velocity.multiplyScalar(0.4);
                         ud.velocity.y *= -0.2;
                         ud.angularVel.multiplyScalar(0.5);
-                        if (ud.velocity.length() < 0.1) {
+                        if (ud.velocity.lengthSq() < 0.01) {
                             ud.settled = true;
                             ud.velocity.set(0,0,0);
                             ud.angularVel.set(0,0,0);
@@ -9420,7 +10017,7 @@ let scene, camera, renderer, controls, raycaster, mouse, ground, grid;
                 // --- HUMAN AI: wander near home, occasionally go inside ---
                 if (ud.type === 'human' && !ud.isCorpse && ud.hp > 0 && !ud.onFire && !ud.isFalling) {
                     // Validate home; pick a new one if old home is gone
-                    if (!ud.home || !worldObjects.includes(ud.home) || ud.home.userData.hp <= 0 || ud.home.userData.skeleton) {
+                    if (!ud.home || !isWorldObject(ud.home) || ud.home.userData.hp <= 0 || ud.home.userData.skeleton) {
                         ud.home = findNearestHouse(o.position);
                     }
 
@@ -9578,7 +10175,7 @@ let scene, camera, renderer, controls, raycaster, mouse, ground, grid;
                     // === ATTACK INVADER ===
                     if (ud.task === 'attackInvader') {
                         const inv = ud.invaderTarget;
-                        if (!inv || !worldObjects.includes(inv) || inv.userData.hp <= 0 || inv.userData.isCorpse) {
+                        if (!inv || !isWorldObject(inv) || inv.userData.hp <= 0 || inv.userData.isCorpse) {
                             ud.task = 'idle';
                             ud.invaderTarget = null;
                         } else {
@@ -9678,7 +10275,7 @@ let scene, camera, renderer, controls, raycaster, mouse, ground, grid;
                         }
                     } else if (ud.task === 'goToTree') {
                         // Validate target
-                        if (!ud.targetTree || !worldObjects.includes(ud.targetTree) ||
+                        if (!ud.targetTree || !isWorldObject(ud.targetTree) ||
                             ud.targetTree.userData.hp <= 0 || ud.targetTree.userData.skeleton ||
                             ud.targetTree.userData.hasFallen || ud.targetTree.userData.isFalling) {
                             // Release claim
@@ -9696,7 +10293,7 @@ let scene, camera, renderer, controls, raycaster, mouse, ground, grid;
                         }
                     } else if (ud.task === 'chopping') {
                         // Stand still and chop
-                        if (ud.targetTree && worldObjects.includes(ud.targetTree)) {
+                        if (ud.targetTree && isWorldObject(ud.targetTree)) {
                             // Sway/chop animation
                             o.rotation.z = Math.sin(ud.taskTimer * 0.4) * 0.3;
                             // Damage the tree
@@ -9875,7 +10472,7 @@ let scene, camera, renderer, controls, raycaster, mouse, ground, grid;
 
                     // PLAYER TARGETING: survival mode — always highest priority
                     let playerTargetWrapper = null;
-                    if (survivalActive && survivalPlayer) {
+                    if (survivalActive && survivalPlayer && !survivalIsPeaceful()) {
                         const dToPlayer = survivalPlayer.position.distanceTo(o.position);
                         if (dToPlayer < ud.alertRange) {
                             playerTargetWrapper = {
@@ -9978,7 +10575,7 @@ let scene, camera, renderer, controls, raycaster, mouse, ground, grid;
                         // Full charge toward target; shoot when in range
                         o.rotation.x = 0;
                         const tgt = playerTargetWrapper || ud.target;
-                        if (!tgt || (!playerTargetWrapper && (!worldObjects.includes(tgt) ||
+                        if (!tgt || (!playerTargetWrapper && (!isWorldObject(tgt) ||
                             tgt.userData.hp <= 0 || tgt.userData.isCorpse))) {
                             ud.invState = 'wander';
                             ud.target = null;
@@ -10441,6 +11038,10 @@ let scene, camera, renderer, controls, raycaster, mouse, ground, grid;
                         ud.onFire = false;
                         ud.hp = 1;
                         o.position.y = 0;
+                        if (survivalActive && ud.survivalKilledByPlayer) {
+                            const meatCount = ud.species === 'bear' || ud.species === 'cow' ? 3 : ud.species === 'rabbit' ? 1 : 2;
+                            createSurvivalMeatDrop(o.position.clone(), meatCount);
+                        }
                     } else {
                         if (ud.skeleton) {
                             shatter(o.position, 4, 0x1a1a1a, 0.5);
@@ -10474,7 +11075,7 @@ let scene, camera, renderer, controls, raycaster, mouse, ground, grid;
 
         function setupUI() {
             const buildIds = ['house', 'skyscraper', 'tree', 'streetlamp', 'human', 'builder', 'invader', 'animal', 'river', 'island', 'ship', 'mountain', 'eraser'];
-            const destroyIds = ['fire', 'vortex', 'tornado', 'whirlpool', 'quake', 'tsunami', 'volcano', 'lavaflood', 'napalm', 'cluster', 'nuke', 'blackhole', 'meteor', 'cracker', 'battleship', 'mothership', 'leviathan', 'kraken', 'maw'];
+            const destroyIds = ['fire', 'vortex', 'tornado', 'whirlpool', 'quake', 'tsunami', 'volcano', 'lavaflood', 'napalm', 'cluster', 'nuke', 'blackhole', 'meteor', 'cracker', 'battleship', 'mothership', 'leviathan', 'kraken', 'maw', 'human-eater'];
             const ids = [...buildIds, ...destroyIds];
 
             const selectTool = (id, el) => {
@@ -10503,6 +11104,7 @@ let scene, camera, renderer, controls, raycaster, mouse, ground, grid;
                 if (id === 'invader') hint = ' · charges your village';
                 if (id === 'animal') hint = ' · random species, wanders';
                 if (id === 'maw') hint = ' · 20 second feeding attack';
+                if (id === 'human-eater') hint = ' · bends forward and snaps up people';
                 showMessage('Selected: ' + label + hint);
             };
 
@@ -10669,6 +11271,7 @@ let scene, camera, renderer, controls, raycaster, mouse, ground, grid;
                 });
                 krakens = [];
                 despawnAllGroundMaws();
+                despawnAllHumanEaters();
                 despawnAllTornadoes();
                 despawnAllLightningVortices();
                 despawnAllTsunamis();
@@ -10783,6 +11386,7 @@ let scene, camera, renderer, controls, raycaster, mouse, ground, grid;
             });
             krakens = [];
             despawnAllGroundMaws();
+            despawnAllHumanEaters();
             octopuses = [];
             removeMonarch();
             ancientBattleships.forEach(bs => removeAncientBattleship(bs));
@@ -12329,6 +12933,7 @@ let scene, camera, renderer, controls, raycaster, mouse, ground, grid;
             camera.aspect = window.innerWidth / window.innerHeight;
             camera.updateProjectionMatrix();
             renderer.setSize(window.innerWidth, window.innerHeight);
+            renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, PERF.maxPixelRatio));
         }
 
         // ===== GAME MODE SYSTEM =====
@@ -12338,6 +12943,8 @@ let scene, camera, renderer, controls, raycaster, mouse, ground, grid;
             const studioSplash = document.getElementById('studio-splash');
             const startScreen = document.getElementById('start-screen');
             const modeScreen = document.getElementById('mode-screen');
+            const survivalTypeScreen = document.getElementById('survival-type-screen');
+            const survivalDifficultyScreen = document.getElementById('survival-difficulty-screen');
             const header = document.getElementById('header');
             const toolbar = document.getElementById('toolbar');
             const survivalHud = document.getElementById('survival-hud');
@@ -12356,6 +12963,36 @@ let scene, camera, renderer, controls, raycaster, mouse, ground, grid;
                 tipIndex = (tipIndex + 1) % loadingTips.length;
                 if (loadingTip) loadingTip.textContent = loadingTips[tipIndex];
             }, 1800);
+
+            const leaveActiveModeForSwitch = () => {
+                if (survivalActive) exitSurvival();
+                if (constrActive) exitConstruction();
+                survivalHud.classList.add('hidden');
+                survivalControls.classList.remove('active');
+                document.getElementById('construction-hud').classList.add('hidden');
+                if (survivalTypeScreen) survivalTypeScreen.classList.add('hidden');
+                if (survivalDifficultyScreen) survivalDifficultyScreen.classList.add('hidden');
+                header.style.display = 'none';
+                toolbar.style.display = 'none';
+            };
+
+            const startSurvivalMode = (variant = 'destructive', difficulty = 'normal') => {
+                leaveActiveModeForSwitch();
+                modeScreen.classList.add('hidden');
+                if (survivalTypeScreen) survivalTypeScreen.classList.add('hidden');
+                if (survivalDifficultyScreen) survivalDifficultyScreen.classList.add('hidden');
+                gameMode = 'survival';
+                survivalVariant = variant;
+                survivalDifficulty = variant === 'destructive' ? difficulty : 'peaceful';
+                header.style.display = 'none';
+                toolbar.style.display = 'none';
+                survivalHud.classList.remove('hidden');
+                clearScene();
+                if (window.matchMedia('(hover: none) and (pointer: coarse)').matches) {
+                    survivalControls.classList.add('active');
+                }
+                enterSurvival();
+            };
 
             const finishStudioSplash = () => {
                 if (splashDone) return;
@@ -12388,42 +13025,48 @@ let scene, camera, renderer, controls, raycaster, mouse, ground, grid;
                 modeScreen.classList.add('hidden');
                 startScreen.classList.remove('hidden');
             };
+            document.getElementById('btn-back-modes').onclick = () => {
+                survivalTypeScreen.classList.add('hidden');
+                modeScreen.classList.remove('hidden');
+            };
+            document.getElementById('btn-back-survival-types').onclick = () => {
+                survivalDifficultyScreen.classList.add('hidden');
+                survivalTypeScreen.classList.remove('hidden');
+            };
 
             // Mode: Simulator
             document.getElementById('mode-simulator').onclick = () => {
+                leaveActiveModeForSwitch();
                 modeScreen.classList.add('hidden');
                 gameMode = 'simulator';
                 header.style.display = '';
                 toolbar.style.display = '';
-                document.getElementById('construction-hud').classList.add('hidden');
-                if (constrActive) exitConstruction();
-                exitSurvival();
                 clearScene();
                 initFlyCamera();
                 showMessage('WASD = move  |  Drag = look  |  Q/E = up/down  |  Shift = fast');
             };
             // Mode: Survival
             document.getElementById('mode-survival').onclick = () => {
+                leaveActiveModeForSwitch();
                 modeScreen.classList.add('hidden');
-                gameMode = 'survival';
-                header.style.display = 'none';
-                toolbar.style.display = 'none';
-                document.getElementById('construction-hud').classList.add('hidden');
-                survivalHud.classList.remove('hidden');
-                if (constrActive) exitConstruction();
-                clearScene();
-                if (window.matchMedia('(hover: none) and (pointer: coarse)').matches) {
-                    survivalControls.classList.add('active');
-                }
-                enterSurvival();
+                survivalTypeScreen.classList.remove('hidden');
             };
+            document.getElementById('survival-destructive').onclick = () => {
+                survivalTypeScreen.classList.add('hidden');
+                survivalDifficultyScreen.classList.remove('hidden');
+            };
+            document.getElementById('survival-easy').onclick = () => startSurvivalMode('destructive', 'easy');
+            document.getElementById('survival-normal').onclick = () => startSurvivalMode('destructive', 'normal');
+            document.getElementById('survival-hard').onclick = () => startSurvivalMode('destructive', 'hard');
+            document.getElementById('survival-impossible').onclick = () => startSurvivalMode('destructive', 'impossible');
+            document.getElementById('survival-peaceful').onclick = () => startSurvivalMode('peaceful');
             // Mode: Construction
             document.getElementById('mode-construction').onclick = () => {
+                leaveActiveModeForSwitch();
                 modeScreen.classList.add('hidden');
                 gameMode = 'construction';
                 header.style.display = 'none';
                 toolbar.style.display = 'none';
-                exitSurvival();
                 document.getElementById('construction-hud').classList.remove('hidden');
                 enterConstruction();   // clearScene is called inside enterConstruction
                 initFlyCamera();
@@ -12479,7 +13122,6 @@ let scene, camera, renderer, controls, raycaster, mouse, ground, grid;
                     survivalKeys[key] = false;
                     if (key === 'Digit1') survivalPunchPressed = false;
                     if (key === 'KeyE') {
-                        survivalActionPressed = false;
                         survivalChopProgress = 0;
                         survivalChopTarget = null;
                     }
@@ -12488,7 +13130,6 @@ let scene, camera, renderer, controls, raycaster, mouse, ground, grid;
                     survivalKeys[key] = false;
                     if (key === 'Digit1') survivalPunchPressed = false;
                     if (key === 'KeyE') {
-                        survivalActionPressed = false;
                         survivalChopProgress = 0;
                         survivalChopTarget = null;
                     }
@@ -12497,9 +13138,21 @@ let scene, camera, renderer, controls, raycaster, mouse, ground, grid;
                     survivalKeys[key] = false;
                     if (key === 'Digit1') survivalPunchPressed = false;
                     if (key === 'KeyE') {
-                        survivalActionPressed = false;
                         survivalChopProgress = 0;
                         survivalChopTarget = null;
+                    }
+                });
+            });
+
+            document.querySelectorAll('#survival-hotbar .inventory-slot').forEach(btn => {
+                btn.addEventListener('pointerdown', e => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    const slot = Number(btn.getAttribute('data-slot'));
+                    if (Number.isInteger(slot)) {
+                        survivalSelectedSlot = slot;
+                        updateSurvivalHud();
+                        updateHeldFoodModel();
                     }
                 });
             });
@@ -12508,6 +13161,45 @@ let scene, camera, renderer, controls, raycaster, mouse, ground, grid;
         // ===== SURVIVAL MODE =====
         let survivalKeys = {};
         let grassPatches = [];
+        const SURVIVAL_INVENTORY_SIZE = 9;
+        const SURVIVAL_ITEM_DEFS = {
+            wood: { icon: '🪵', name: 'Wood', maxStack: 64 },
+            apple: { icon: '🍎', name: 'Apple', maxStack: 64, food: true, heal: 32 },
+            meat: { icon: '🥩', name: 'Meat', maxStack: 64, food: true, heal: 50 }
+        };
+        let survivalInventory = Array.from({ length: SURVIVAL_INVENTORY_SIZE }, () => null);
+        let survivalSelectedSlot = 0;
+        let survivalDroppedItems = [];
+        let survivalVariant = 'destructive';
+        let survivalDifficulty = 'normal';
+        const SURVIVAL_DIFFICULTY_SETTINGS = {
+            easy: { label: 'Easy', minDelayMs: 60000, maxDelayMs: 120000, minDamage: 1, maxDamage: 10 },
+            normal: { label: 'Normal', minDelayMs: 30000, maxDelayMs: 60000, minDamage: 5, maxDamage: 20 },
+            hard: { label: 'Hard', minDelayMs: 5000, maxDelayMs: 10000, minDamage: 10, maxDamage: 50 },
+            impossible: { label: 'Impossible', minDelayMs: 2000, maxDelayMs: 5000, minDamage: 20, maxDamage: 100 },
+            peaceful: { label: 'Peaceful', minDelayMs: Infinity, maxDelayMs: Infinity, minDamage: 0, maxDamage: 0 }
+        };
+
+        function survivalIsPeaceful() {
+            return survivalVariant === 'peaceful';
+        }
+
+        function currentSurvivalDifficultySettings() {
+            if (survivalIsPeaceful()) return SURVIVAL_DIFFICULTY_SETTINGS.peaceful;
+            return SURVIVAL_DIFFICULTY_SETTINGS[survivalDifficulty] || SURVIVAL_DIFFICULTY_SETTINGS.normal;
+        }
+
+        function nextSurvivalDisasterDelay() {
+            const settings = currentSurvivalDifficultySettings();
+            if (!Number.isFinite(settings.minDelayMs) || !Number.isFinite(settings.maxDelayMs)) return Infinity;
+            return settings.minDelayMs + Math.random() * (settings.maxDelayMs - settings.minDelayMs);
+        }
+
+        function rollSurvivalDifficultyDamage() {
+            const settings = currentSurvivalDifficultySettings();
+            if (settings.maxDamage <= 0) return 0;
+            return settings.minDamage + Math.floor(Math.random() * (settings.maxDamage - settings.minDamage + 1));
+        }
 
         function spawnGrass() {
             clearGrass();
@@ -12571,9 +13263,9 @@ let scene, camera, renderer, controls, raycaster, mouse, ground, grid;
 
         let survivalHp = 100;
         let survivalWood = 0;
+        let survivalApples = 0;
         let survivalChopProgress = 0;
         let survivalChopTarget = null;
-        let survivalActionPressed = false;
         let survivalVelY = 0; // vertical velocity for tornado lift / falling
         let survivalCaughtInTornado = false; // true while being pulled in
         let survivalSwirlAngle = 0; // current swirl orbit angle around the tornado center
@@ -12587,11 +13279,17 @@ let scene, camera, renderer, controls, raycaster, mouse, ground, grid;
         let survivalDamageTimers = {};
         let survivalHazards = [];
         let survivalGrounded = true;
+        let survivalJumpFallImmune = false;
         let survivalPunchPressed = false;
         let survivalPunchTimer = 0;
         let survivalMawGrab = null;
         let survivalMawReleaseUntil = 0;
+        let survivalKrakenRide = null;
+        let survivalKrakenFallStartY = null;
         let survivalHands = null;
+        let survivalEatTimer = 0;
+        let survivalEatingItem = null;
+        let survivalLastDamageCause = 'unknown disaster';
         const SURVIVAL_EYE_HEIGHT = 2.5;
         const SURVIVAL_MOVE_SPEED = 0.32; // villager walking pace
         const SURVIVAL_LOOK_KEY_SPEED = 0.045;
@@ -12603,15 +13301,23 @@ let scene, camera, renderer, controls, raycaster, mouse, ground, grid;
             return String(label || 'damage').replace(/\s+/g, '-').toLowerCase();
         }
 
-        function applySurvivalDamage(amount, label = 'damage', cooldownMs = 0, key = null) {
+        function applySurvivalDamage(amount, label = 'damage', cooldownMs = 0, key = null, exactDamage = false) {
             if (!survivalActive || !survivalPlayer || survivalHp <= 0) return false;
             const now = performance.now();
             const damageKey = key || survivalCooldownKey(label);
             if (cooldownMs > 0 && survivalDamageTimers[damageKey] && now - survivalDamageTimers[damageKey] < cooldownMs) return false;
             survivalDamageTimers[damageKey] = now;
+            if (!exactDamage && !survivalIsPeaceful()) amount = rollSurvivalDifficultyDamage();
+            amount = Math.max(0, Math.round(amount));
+            if (amount <= 0) return false;
+            survivalLastDamageCause = label;
             survivalHp -= amount;
             showSurvivalToast(`-${amount} HP (${label})`);
             return true;
+        }
+
+        function applySurvivalLethalDamage(label = 'swallow', key = null) {
+            return applySurvivalDamage(Math.max(100, survivalHp), label, 0, key || survivalCooldownKey(label), true);
         }
 
         function survivalPlayerGroundPos() {
@@ -12657,11 +13363,122 @@ let scene, camera, renderer, controls, raycaster, mouse, ground, grid;
             });
         }
 
+        function resetSurvivalInventory() {
+            survivalInventory = Array.from({ length: SURVIVAL_INVENTORY_SIZE }, () => null);
+            survivalSelectedSlot = 0;
+            survivalDroppedItems.forEach(drop => scene.remove(drop.mesh));
+            survivalDroppedItems = [];
+        }
+
+        function addSurvivalItem(itemId, amount = 1) {
+            const def = SURVIVAL_ITEM_DEFS[itemId];
+            if (!def || amount <= 0) return 0;
+            let remaining = amount;
+            for (const slot of survivalInventory) {
+                if (!slot || slot.id !== itemId || slot.count >= def.maxStack) continue;
+                const moved = Math.min(remaining, def.maxStack - slot.count);
+                slot.count += moved;
+                remaining -= moved;
+                if (remaining <= 0) break;
+            }
+            for (let i = 0; i < survivalInventory.length && remaining > 0; i++) {
+                if (survivalInventory[i]) continue;
+                const moved = Math.min(remaining, def.maxStack);
+                survivalInventory[i] = { id: itemId, count: moved };
+                remaining -= moved;
+            }
+            updateSurvivalHud();
+            updateHeldFoodModel();
+            return amount - remaining;
+        }
+
+        function removeSurvivalItemFromSlot(slotIndex, amount = 1) {
+            const slot = survivalInventory[slotIndex];
+            if (!slot) return false;
+            slot.count -= amount;
+            if (slot.count <= 0) survivalInventory[slotIndex] = null;
+            updateSurvivalHud();
+            updateHeldFoodModel();
+            return true;
+        }
+
+        function selectedSurvivalItem() {
+            return survivalInventory[survivalSelectedSlot] || null;
+        }
+
+        function createSurvivalMeatDrop(pos, amount = 1) {
+            const group = new THREE.Group();
+            group.name = 'survival-meat-drop';
+            const meatMat = new THREE.MeshStandardMaterial({ color: 0xb91c1c, roughness: 0.72 });
+            const fatMat = new THREE.MeshStandardMaterial({ color: 0xffedd5, roughness: 0.85 });
+            const meat = new THREE.Mesh(new THREE.BoxGeometry(0.7, 0.32, 0.48), meatMat);
+            meat.castShadow = true;
+            group.add(meat);
+            const fat = new THREE.Mesh(new THREE.BoxGeometry(0.18, 0.34, 0.5), fatMat);
+            fat.position.x = 0.26;
+            group.add(fat);
+            group.position.copy(pos);
+            group.position.y = 0.45;
+            group.rotation.y = Math.random() * Math.PI * 2;
+            scene.add(group);
+            survivalDroppedItems.push({
+                mesh: group,
+                id: 'meat',
+                count: amount,
+                spawnTime: performance.now(),
+                bob: Math.random() * Math.PI * 2
+            });
+        }
+
+        function collectNearbySurvivalDrops(now) {
+            if (!survivalActive || !survivalPlayer) return;
+            for (let i = survivalDroppedItems.length - 1; i >= 0; i--) {
+                const drop = survivalDroppedItems[i];
+                drop.bob += 0.08;
+                drop.mesh.rotation.y += 0.04;
+                drop.mesh.position.y = 0.45 + Math.sin(drop.bob) * 0.1;
+                if (survivalPlayer.position.distanceTo(drop.mesh.position) > 2.4) continue;
+                const added = addSurvivalItem(drop.id, drop.count);
+                if (added > 0) {
+                    scene.remove(drop.mesh);
+                    survivalDroppedItems.splice(i, 1);
+                    showSurvivalToast(`+${added} ${SURVIVAL_ITEM_DEFS[drop.id].icon} ${SURVIVAL_ITEM_DEFS[drop.id].name}`);
+                } else if (now - drop.spawnTime > 800) {
+                    showSurvivalToast('Inventory full');
+                    drop.spawnTime = now;
+                }
+            }
+        }
+
         function releaseSurvivalMawGrab(message = 'Maw released you') {
             if (survivalMawGrab && survivalMawGrab.tentacle) releaseMawTarget(survivalMawGrab.tentacle);
             survivalMawGrab = null;
             survivalMawReleaseUntil = performance.now() + 2500;
             showSurvivalToast(message);
+        }
+
+        function findSurvivalLookTarget(type, reach = 6, lateralLimit = 1.8) {
+            if (!survivalPlayer) return null;
+            const forward = new THREE.Vector3(Math.sin(survivalYaw), 0, Math.cos(survivalYaw));
+            const playerPos = new THREE.Vector3(survivalPlayer.position.x, 0, survivalPlayer.position.z);
+            let best = null;
+            let bestT = Infinity;
+            worldObjects.forEach(other => {
+                if (other.userData.type !== type) return;
+                if (other.userData.hp <= 0 || other.userData.isCorpse || other.userData.frozen) return;
+                const toObj = new THREE.Vector3().subVectors(other.position, playerPos);
+                const dist = toObj.length();
+                if (dist > reach + 2) return;
+                const along = toObj.dot(forward);
+                if (along < 0 || along > reach) return;
+                const lateralSq = Math.max(0, dist * dist - along * along);
+                if (Math.sqrt(lateralSq) > lateralLimit) return;
+                if (along < bestT) {
+                    bestT = along;
+                    best = other;
+                }
+            });
+            return best;
         }
 
         function survivalPunch() {
@@ -12673,6 +13490,25 @@ let scene, camera, renderer, controls, raycaster, mouse, ground, grid;
                     releaseSurvivalMawGrab('Maw let go');
                 } else {
                     showSurvivalToast(`Maw punches: ${survivalMawGrab.punches}/3`);
+                }
+                return;
+            }
+
+            const animal = findSurvivalLookTarget('animal', 6.2, 2.1);
+            if (animal) {
+                const ud = animal.userData;
+                if (!ud.survivalPunchesToKill) ud.survivalPunchesToKill = 4 + Math.floor(Math.random() * 9);
+                ud.survivalPunchesTaken = (ud.survivalPunchesTaken || 0) + 1;
+                const left = Math.max(0, ud.survivalPunchesToKill - ud.survivalPunchesTaken);
+                const knockback = new THREE.Vector3(animal.position.x - survivalPlayer.position.x, 0, animal.position.z - survivalPlayer.position.z);
+                if (knockback.lengthSq() > 0.001) animal.position.addScaledVector(knockback.normalize(), 0.35);
+                animal.rotation.z = Math.sin(ud.survivalPunchesTaken * 1.7) * 0.18;
+                if (left <= 0) {
+                    ud.hp = 0;
+                    ud.survivalKilledByPlayer = true;
+                    showSurvivalToast(`${ud.species || 'Animal'} dropped meat`);
+                } else {
+                    showSurvivalToast(`${ud.species || 'Animal'}: ${left} punch${left === 1 ? '' : 'es'} left`);
                 }
             }
         }
@@ -12702,8 +13538,44 @@ let scene, camera, renderer, controls, raycaster, mouse, ground, grid;
 
             group.userData.left = makeHand(-1);
             group.userData.right = makeHand(1);
+            const foodGroup = new THREE.Group();
+            foodGroup.name = 'survival-held-food';
+            foodGroup.visible = false;
+            foodGroup.position.set(0.43, -0.36, -0.86);
+            group.add(foodGroup);
+            group.userData.food = foodGroup;
             group.visible = false;
             return group;
+        }
+
+        function updateHeldFoodModel() {
+            if (!survivalHands || !survivalHands.userData.food) return;
+            const foodGroup = survivalHands.userData.food;
+            while (foodGroup.children.length > 0) foodGroup.remove(foodGroup.children[0]);
+            const slot = selectedSurvivalItem();
+            const def = slot ? SURVIVAL_ITEM_DEFS[slot.id] : null;
+            if (!def || !def.food) {
+                foodGroup.visible = false;
+                return;
+            }
+
+            if (slot.id === 'meat') {
+                const meatMat = new THREE.MeshBasicMaterial({ color: 0xb91c1c });
+                const fatMat = new THREE.MeshBasicMaterial({ color: 0xffedd5 });
+                const meat = new THREE.Mesh(new THREE.BoxGeometry(0.22, 0.13, 0.28), meatMat);
+                foodGroup.add(meat);
+                const fat = new THREE.Mesh(new THREE.BoxGeometry(0.07, 0.14, 0.3), fatMat);
+                fat.position.x = 0.08;
+                foodGroup.add(fat);
+            } else if (slot.id === 'apple') {
+                const apple = new THREE.Mesh(new THREE.SphereGeometry(0.14, 10, 8), new THREE.MeshBasicMaterial({ color: 0xdc2626 }));
+                apple.scale.set(1, 0.95, 1);
+                foodGroup.add(apple);
+                const stem = new THREE.Mesh(new THREE.CylinderGeometry(0.012, 0.016, 0.09, 5), new THREE.MeshBasicMaterial({ color: 0x78350f }));
+                stem.position.y = 0.13;
+                foodGroup.add(stem);
+            }
+            foodGroup.visible = true;
         }
 
         function updateSurvivalHands() {
@@ -12711,16 +13583,23 @@ let scene, camera, renderer, controls, raycaster, mouse, ground, grid;
             survivalHands.visible = survivalActive;
             const right = survivalHands.userData.right;
             const left = survivalHands.userData.left;
+            const food = survivalHands.userData.food;
             const t = survivalPunchTimer > 0 ? survivalPunchTimer / 14 : 0;
             const jab = Math.sin(t * Math.PI);
+            const eatingT = survivalEatTimer > 0 ? survivalEatTimer / 32 : 0;
+            const chew = survivalEatTimer > 0 ? Math.sin((1 - eatingT) * Math.PI * 8) : 0;
             if (right) {
-                right.position.set(0.35, -0.36 - jab * 0.04, -0.7 - jab * 0.48);
-                right.rotation.x = -jab * 0.5;
+                right.position.set(0.35, -0.36 - jab * 0.04 - Math.max(0, chew) * 0.015, -0.7 - jab * 0.48 - (survivalEatTimer > 0 ? 0.16 : 0));
+                right.rotation.x = -jab * 0.5 - (survivalEatTimer > 0 ? 0.65 + Math.max(0, chew) * 0.18 : 0);
                 right.rotation.z = -0.15 - jab * 0.18;
             }
             if (left) {
                 left.position.set(-0.35, -0.4 + jab * 0.03, -0.62 + jab * 0.08);
                 left.rotation.z = 0.18;
+            }
+            if (food) {
+                food.position.set(0.43, -0.36 - Math.max(0, chew) * 0.02, -0.86 - (survivalEatTimer > 0 ? 0.38 : 0));
+                food.rotation.set(-0.35 - (survivalEatTimer > 0 ? 0.8 + chew * 0.2 : 0), -0.28, 0.14 + chew * 0.08);
             }
         }
 
@@ -12819,6 +13698,8 @@ let scene, camera, renderer, controls, raycaster, mouse, ground, grid;
             survivalActive = true;
             survivalHp = 100;
             survivalWood = 0;
+            survivalApples = 0;
+            resetSurvivalInventory();
             survivalChopProgress = 0;
             survivalChopTarget = null;
             survivalVelY = 0;
@@ -12826,12 +13707,18 @@ let scene, camera, renderer, controls, raycaster, mouse, ground, grid;
             survivalDamageTimers = {};
             survivalHazards = [];
             survivalGrounded = true;
+            survivalJumpFallImmune = false;
             survivalPunchPressed = false;
             survivalPunchTimer = 0;
+            survivalEatTimer = 0;
+            survivalEatingItem = null;
             survivalMawGrab = null;
             survivalMawReleaseUntil = 0;
+            survivalKrakenRide = null;
+            survivalKrakenFallStartY = null;
+            survivalLastDamageCause = 'unknown disaster';
             survivalStartTime = performance.now();
-            nextDisasterTime = performance.now() + 4000;
+            nextDisasterTime = survivalIsPeaceful() ? Infinity : performance.now() + nextSurvivalDisasterDelay();
 
             // Save current camera state so we can restore on exit
             savedCameraPos = camera.position.clone();
@@ -12849,6 +13736,7 @@ let scene, camera, renderer, controls, raycaster, mouse, ground, grid;
 
             if (!survivalHands) survivalHands = buildSurvivalHands();
             if (!survivalHands.parent) camera.add(survivalHands);
+            updateHeldFoodModel();
             if (!camera.parent) scene.add(camera);
 
             // Initialize yaw/pitch
@@ -12863,6 +13751,7 @@ let scene, camera, renderer, controls, raycaster, mouse, ground, grid;
             window.addEventListener('keydown', survivalKeyDown);
             window.addEventListener('keyup', survivalKeyUp);
             renderer.domElement.addEventListener('pointerdown', survivalPointerDown);
+            renderer.domElement.addEventListener('contextmenu', survivalContextMenu);
             window.addEventListener('pointermove', survivalPointerMove);
             window.addEventListener('pointerup', survivalPointerUp);
 
@@ -12888,14 +13777,21 @@ let scene, camera, renderer, controls, raycaster, mouse, ground, grid;
             window.removeEventListener('keyup', survivalKeyUp);
             if (renderer && renderer.domElement) {
                 renderer.domElement.removeEventListener('pointerdown', survivalPointerDown);
+                renderer.domElement.removeEventListener('contextmenu', survivalContextMenu);
             }
             window.removeEventListener('pointermove', survivalPointerMove);
             window.removeEventListener('pointerup', survivalPointerUp);
             survivalKeys = {};
             survivalDragging = false;
             survivalHazards = [];
+            survivalDroppedItems.forEach(drop => scene.remove(drop.mesh));
+            survivalDroppedItems = [];
             survivalMawGrab = null;
+            survivalKrakenRide = null;
+            survivalKrakenFallStartY = null;
             survivalPunchPressed = false;
+            survivalEatTimer = 0;
+            survivalEatingItem = null;
 
             // Hide UI elements
             document.getElementById('survival-crosshair').classList.remove('visible');
@@ -12919,6 +13815,22 @@ let scene, camera, renderer, controls, raycaster, mouse, ground, grid;
             // Hide death overlay if visible
             const msg = document.getElementById('survival-message');
             msg.classList.remove('visible');
+            msg.innerHTML = '';
+        }
+
+        function respawnSurvival() {
+            gameMode = 'survival';
+            const respawnVariant = survivalVariant;
+            const respawnDifficulty = survivalDifficulty;
+            exitSurvival();
+            survivalVariant = respawnVariant;
+            survivalDifficulty = respawnDifficulty;
+            clearScene();
+            document.getElementById('survival-hud').classList.remove('hidden');
+            if (window.matchMedia('(hover: none) and (pointer: coarse)').matches) {
+                document.getElementById('survival-controls').classList.add('active');
+            }
+            enterSurvival();
         }
 
         // ===== MOUSE LOOK =====
@@ -12973,10 +13885,20 @@ let scene, camera, renderer, controls, raycaster, mouse, ground, grid;
 
         function survivalPointerDown(e) {
             if (e.target.closest('#survival-hud') || e.target.closest('#survival-controls')) return;
+            if (e.button === 2) {
+                e.preventDefault();
+                eatSelectedSurvivalFood();
+                return;
+            }
             survivalDragging = true;
             survivalLastPointer.x = e.clientX;
             survivalLastPointer.y = e.clientY;
             try { renderer.domElement.setPointerCapture(e.pointerId); } catch(_) {}
+        }
+
+        function survivalContextMenu(e) {
+            if (!survivalActive) return;
+            e.preventDefault();
         }
 
         function survivalPointerMove(e) {
@@ -13029,6 +13951,11 @@ let scene, camera, renderer, controls, raycaster, mouse, ground, grid;
             if (k === 'e') {
                 survivalKeys['KeyE'] = true;
                 e.preventDefault();
+                return;
+            }
+            if (k === 'c') {
+                eatSelectedSurvivalFood();
+                e.preventDefault();
             }
         }
         function survivalKeyUp(e) {
@@ -13054,27 +13981,104 @@ let scene, camera, renderer, controls, raycaster, mouse, ground, grid;
             }
             if (k === 'e') {
                 survivalKeys['KeyE'] = false;
-                survivalActionPressed = false;
                 survivalChopProgress = 0;
                 survivalChopTarget = null;
             }
+        }
+
+        function clearSurvivalKrakenRide() {
+            survivalKrakenRide = null;
+        }
+
+        function startSurvivalKrakenRide(kraken, index) {
+            if (!survivalActive || !survivalPlayer || !kraken || !kraken.groundChunk || survivalKrakenRide) return false;
+            const chunk = kraken.groundChunk;
+            const localOffset = chunk.group.worldToLocal(survivalPlayer.position.clone());
+            localOffset.y = Math.max(localOffset.y, 1.85);
+            const horizontal = Math.sqrt(localOffset.x * localOffset.x + localOffset.z * localOffset.z);
+            if (horizontal > chunk.radius * 0.72) {
+                localOffset.multiplyScalar((chunk.radius * 0.72) / horizontal);
+                localOffset.y = Math.max(localOffset.y, 1.85);
+            }
+            survivalKrakenRide = {
+                kraken,
+                index,
+                chunk,
+                localOffset,
+                lastEscapeAttemptAt: 0,
+            };
+            survivalVelY = 0;
+            survivalGrounded = true;
+            survivalJumpFallImmune = false;
+            showSurvivalToast('Kraken lifted your chunk: Space to jump');
+            return true;
+        }
+
+        function escapeSurvivalKrakenRide(now) {
+            if (!survivalKrakenRide || !survivalPlayer) return false;
+            if (now - survivalKrakenRide.lastEscapeAttemptAt < 450) return true;
+            survivalKrakenRide.lastEscapeAttemptAt = now;
+
+            const k = survivalKrakenRide.kraken;
+            if (!k || k.phase !== 'groundGrab' || k.phaseTimer < 44 || k.phaseTimer > 136) {
+                showSurvivalToast('Too late to jump');
+                return true;
+            }
+
+            if (Math.random() < 0.58) {
+                survivalKrakenFallStartY = Math.max(0, survivalPlayer.position.y);
+                clearSurvivalKrakenRide();
+                survivalVelY = -0.08;
+                survivalGrounded = false;
+                survivalJumpFallImmune = false;
+                showSurvivalToast('You jumped from the chunk');
+            } else {
+                showSurvivalToast('Could not get footing');
+            }
+            return true;
+        }
+
+        function updateSurvivalKrakenRide(now) {
+            if (!survivalKrakenRide || !survivalPlayer) return false;
+            const k = survivalKrakenRide.kraken;
+            const chunk = survivalKrakenRide.chunk;
+            if (!k || !krakens.includes(k) || k.phase !== 'groundGrab' || !k.groundChunk || k.groundChunk !== chunk) {
+                clearSurvivalKrakenRide();
+                return false;
+            }
+
+            const worldRidePos = chunk.group.localToWorld(survivalKrakenRide.localOffset.clone());
+            survivalPlayer.position.copy(worldRidePos);
+            survivalVelY = 0;
+            survivalGrounded = true;
+            survivalJumpFallImmune = false;
+
+            if (survivalKeys['Space']) escapeSurvivalKrakenRide(now);
+            if (survivalKrakenRide && k.phaseTimer >= 145) {
+                applySurvivalLethalDamage('kraken swallow', `kraken-swallow:${survivalKrakenRide.index}`);
+                clearSurvivalKrakenRide();
+            }
+            return !!survivalKrakenRide;
         }
 
         function updateSurvival() {
             if (!survivalActive || !survivalPlayer) return;
             const now = performance.now();
 
-            if (survivalKeys['KeyA']) survivalYaw += SURVIVAL_LOOK_KEY_SPEED;
-            if (survivalKeys['KeyD']) survivalYaw -= SURVIVAL_LOOK_KEY_SPEED;
-            if (survivalKeys['KeyW']) survivalPitch += SURVIVAL_LOOK_KEY_SPEED;
-            if (survivalKeys['KeyS']) survivalPitch -= SURVIVAL_LOOK_KEY_SPEED;
+            if (survivalKeys['ArrowLeft'])  survivalYaw += SURVIVAL_LOOK_KEY_SPEED;
+            if (survivalKeys['ArrowRight']) survivalYaw -= SURVIVAL_LOOK_KEY_SPEED;
+            if (survivalKeys['ArrowUp'])    survivalPitch += SURVIVAL_LOOK_KEY_SPEED;
+            if (survivalKeys['ArrowDown'])  survivalPitch -= SURVIVAL_LOOK_KEY_SPEED;
             const maxPitch = Math.PI / 2 - 0.15;
             if (survivalPitch > maxPitch) survivalPitch = maxPitch;
             if (survivalPitch < -maxPitch) survivalPitch = -maxPitch;
 
-            if (survivalKeys['Space'] && survivalGrounded && !survivalMawGrab) {
+            const krakenRideActive = updateSurvivalKrakenRide(now);
+
+            if (survivalKeys['Space'] && survivalGrounded && !survivalMawGrab && !krakenRideActive) {
                 survivalVelY = 0.78;
                 survivalGrounded = false;
+                survivalJumpFallImmune = true;
             }
 
             // Forward = direction from yaw (XZ only). Right = perpendicular.
@@ -13084,11 +14088,11 @@ let scene, camera, renderer, controls, raycaster, mouse, ground, grid;
             // Aggregate movement input into a vector (so diagonals don't double-speed)
             const moveDir = new THREE.Vector3();
             let isMoving = false;
-            if (!survivalCaughtInTornado && !survivalMawGrab) {
-                if (survivalKeys['ArrowUp'])    { moveDir.add(forward); isMoving = true; }
-                if (survivalKeys['ArrowDown'])  { moveDir.sub(forward); isMoving = true; }
-                if (survivalKeys['ArrowLeft'])  { moveDir.sub(right);   isMoving = true; }
-                if (survivalKeys['ArrowRight']) { moveDir.add(right);   isMoving = true; }
+            if (!survivalCaughtInTornado && !survivalMawGrab && !krakenRideActive) {
+                if (survivalKeys['KeyW']) { moveDir.add(forward); isMoving = true; }
+                if (survivalKeys['KeyS']) { moveDir.sub(forward); isMoving = true; }
+                if (survivalKeys['KeyA']) { moveDir.sub(right);   isMoving = true; }
+                if (survivalKeys['KeyD']) { moveDir.add(right);   isMoving = true; }
                 if (isMoving) {
                     moveDir.normalize().multiplyScalar(SURVIVAL_MOVE_SPEED);
                     survivalPlayer.position.x += moveDir.x;
@@ -13133,7 +14137,7 @@ let scene, camera, renderer, controls, raycaster, mouse, ground, grid;
                 }
             });
 
-            if (nearestTornado) {
+            if (!survivalIsPeaceful() && nearestTornado) {
                 survivalCaughtInTornado = nearestTornadoD < 60;
                 if (survivalCaughtInTornado) {
                     const t = nearestTornado;
@@ -13150,8 +14154,9 @@ let scene, camera, renderer, controls, raycaster, mouse, ground, grid;
                     const lift = 0.18 * Math.max(0.5, closeness);
                     survivalVelY += lift;
                     survivalVelY = Math.min(survivalVelY, 0.8);
+                    survivalJumpFallImmune = false;
                     if (now - lastDamageTime > 150) {
-                        survivalHp -= 4;
+                        applySurvivalDamage(4, 'tornado', 0, 'tornado');
                         lastDamageTime = now;
                     }
                 }
@@ -13160,21 +14165,32 @@ let scene, camera, renderer, controls, raycaster, mouse, ground, grid;
             }
 
             // Apply vertical velocity + gravity
-            survivalPlayer.position.y += survivalVelY;
-            survivalVelY -= 0.04;
-            if (survivalPlayer.position.y <= 0) {
-                if (survivalVelY < -0.6) {
-                    const fallDmg = Math.floor((-survivalVelY - 0.6) * 25);
-                    if (fallDmg > 0) {
-                        survivalHp -= fallDmg;
-                        showSurvivalToast(`-${fallDmg} HP (fall)`);
+            if (!krakenRideActive) {
+                survivalPlayer.position.y += survivalVelY;
+                survivalVelY -= 0.04;
+                if (survivalPlayer.position.y <= 0) {
+                    if (survivalKrakenFallStartY !== null) {
+                        const fallHeight = Math.max(0, survivalKrakenFallStartY);
+                        const fallDmg = Math.max(2, Math.min(20, Math.round(2 + (fallHeight / 90) * 18)));
+                        applySurvivalDamage(fallDmg, 'kraken fall', 0, 'kraken-fall', true);
+                        survivalKrakenFallStartY = null;
+                    } else if (!survivalJumpFallImmune && survivalVelY < -0.6) {
+                        const fallDmg = Math.floor((-survivalVelY - 0.6) * 25);
+                        if (fallDmg > 0) {
+                            survivalLastDamageCause = 'fall';
+                            survivalHp -= fallDmg;
+                            showSurvivalToast(`-${fallDmg} HP (fall)`);
+                        }
                     }
+                    survivalPlayer.position.y = 0;
+                    survivalVelY = 0;
+                    survivalGrounded = true;
+                    survivalJumpFallImmune = false;
+                } else {
+                    survivalGrounded = false;
                 }
-                survivalPlayer.position.y = 0;
-                survivalVelY = 0;
-                survivalGrounded = true;
             } else {
-                survivalGrounded = false;
+                survivalGrounded = true;
             }
 
             // Clamp to world boundary
@@ -13189,40 +14205,42 @@ let scene, camera, renderer, controls, raycaster, mouse, ground, grid;
 
             // === INTERACTION ===
             survivalUpdateInteraction();
+            collectNearbySurvivalDrops(now);
+            if (survivalEatTimer > 0) survivalEatTimer--;
 
             // === DISASTERS ===
-            if (now > nextDisasterTime) {
+            if (!survivalIsPeaceful() && now > nextDisasterTime) {
                 triggerRandomSurvivalDisaster();
-                nextDisasterTime = now + 5000 + Math.random() * 7000;
+                nextDisasterTime = now + nextSurvivalDisasterDelay();
             }
 
             // === DAMAGE FROM ENVIRONMENT ===
-            const playerPos = new THREE.Vector3(survivalPlayer.position.x, 0, survivalPlayer.position.z);
-            // Volcano lava pools and lava bombs
-            let inVolcanoDanger = false;
-            volcanoes.forEach(v => {
-                const d = playerPos.distanceTo(new THREE.Vector3(v.point.x, 0, v.point.z));
-                if (d < v.poolRadius && d > v.radius * 0.6) inVolcanoDanger = true;
-            });
+            if (!survivalIsPeaceful()) {
+                const playerPos = new THREE.Vector3(survivalPlayer.position.x, 0, survivalPlayer.position.z);
+                // Volcano lava pools and lava bombs
+                let inVolcanoDanger = false;
+                volcanoes.forEach(v => {
+                    const d = playerPos.distanceTo(new THREE.Vector3(v.point.x, 0, v.point.z));
+                    if (d < v.poolRadius && d > v.radius * 0.6) inVolcanoDanger = true;
+                });
 
-            if (inVolcanoDanger && now - lastDamageTime > 350) {
-                survivalHp -= 8;
-                lastDamageTime = now;
-                showSurvivalToast('-8 HP (lava)');
-            }
-
-            for (const b of lavaBombs) {
-                if (b.position.distanceTo(survivalPlayer.position) < 4 && b.position.y < 5) {
-                    if (now - lastDamageTime > 200) {
-                        survivalHp -= 25;
-                        lastDamageTime = now;
-                        showSurvivalToast('-25 HP (lava bomb)');
-                    }
-                    break; // only one bomb damage per frame
+                if (inVolcanoDanger && now - lastDamageTime > 350) {
+                    applySurvivalDamage(8, 'lava', 0, 'lava');
+                    lastDamageTime = now;
                 }
-            }
 
-            updateSurvivalDisasterDamage(now);
+                for (const b of lavaBombs) {
+                    if (b.position.distanceTo(survivalPlayer.position) < 4 && b.position.y < 5) {
+                        if (now - lastDamageTime > 200) {
+                            applySurvivalDamage(25, 'lava bomb', 0, 'lava-bomb');
+                            lastDamageTime = now;
+                        }
+                        break; // only one bomb damage per frame
+                    }
+                }
+
+                updateSurvivalDisasterDamage(now);
+            }
 
             // Always update HUD first so the player sees their HP drop to 0 before the death screen
             updateSurvivalHud();
@@ -13248,6 +14266,9 @@ let scene, camera, renderer, controls, raycaster, mouse, ground, grid;
                 if (h.type === 'napalmFire' && now >= h.nextTickAt && playerPos.distanceTo(h.point) <= h.radius) {
                     applySurvivalDamage(2, 'napalm fire', 0, `napalm-fire:${i}:${Math.floor(now / 1000)}`);
                     h.nextTickAt += 1000;
+                } else if (h.type === 'nuclearFallout' && now >= h.nextTickAt && playerPos.distanceTo(h.point) <= h.radius) {
+                    applySurvivalDamage(4, 'nuclear fallout', 0, `nuclear-fallout:${i}:${Math.floor(now / 800)}`);
+                    h.nextTickAt += 800;
                 }
             }
 
@@ -13283,7 +14304,7 @@ let scene, camera, renderer, controls, raycaster, mouse, ground, grid;
                 survivalVelY = Math.min(survivalVelY, 0.05);
                 if (d < 7 && !survivalMawGrab.swallowed) {
                     survivalMawGrab.swallowed = true;
-                    applySurvivalDamage(100, 'maw swallow', 0, 'maw-swallow');
+                    applySurvivalLethalDamage('maw swallow', 'maw-swallow');
                     if (survivalMawGrab.tentacle) releaseMawTarget(survivalMawGrab.tentacle);
                     survivalMawGrab = null;
                     survivalMawReleaseUntil = now + 3500;
@@ -13296,8 +14317,11 @@ let scene, camera, renderer, controls, raycaster, mouse, ground, grid;
                 if ((k.phase === 'emerge' || k.phase === 'attack') && dTarget < 82) {
                     applySurvivalDamage(20, 'kraken tentacle', 1200, `kraken-tentacle:${idx}`);
                 }
-                if ((k.phase === 'groundGrab' && dTarget < 45) || dPortal < 18) {
-                    applySurvivalDamage(100, 'kraken swallow', 3500, `kraken-swallow:${idx}`);
+                if (k.phase === 'groundGrab' && dTarget < 45) {
+                    if (k.groundChunk) startSurvivalKrakenRide(k, idx);
+                    else applySurvivalLethalDamage('kraken swallow', `kraken-swallow:${idx}`);
+                } else if (dPortal < 18) {
+                    applySurvivalLethalDamage('kraken swallow', `kraken-swallow:${idx}`);
                 }
             });
 
@@ -13317,13 +14341,66 @@ let scene, camera, renderer, controls, raycaster, mouse, ground, grid;
             const hpBar = document.getElementById('survival-hpbar');
             const timeEl = document.getElementById('survival-time');
             const woodEl = document.getElementById('survival-wood');
+            const applesEl = document.getElementById('survival-apples');
+            const slots = document.querySelectorAll('#survival-hotbar .inventory-slot');
             if (hpEl) hpEl.innerText = Math.max(0, Math.round(survivalHp));
             if (hpBar) hpBar.style.width = Math.max(0, survivalHp) + '%';
             if (woodEl) woodEl.innerText = survivalWood;
+            if (applesEl) applesEl.innerText = survivalApples;
+            slots.forEach((slotEl, index) => {
+                const slot = survivalInventory[index];
+                const def = slot ? SURVIVAL_ITEM_DEFS[slot.id] : null;
+                const itemEl = slotEl.querySelector('.slot-item');
+                const countEl = slotEl.querySelector('.slot-count');
+                slotEl.classList.toggle('selected', index === survivalSelectedSlot);
+                slotEl.setAttribute('aria-disabled', 'false');
+                if (itemEl) itemEl.innerText = def ? def.icon : '';
+                if (countEl) countEl.innerText = slot && slot.count > 1 ? slot.count : '';
+                slotEl.title = def ? `${def.name} x${slot.count}` : `Slot ${index + 1}`;
+            });
             if (timeEl) {
                 const elapsed = Math.floor((performance.now() - survivalStartTime) / 1000);
                 timeEl.innerText = elapsed + 's';
             }
+        }
+
+        function eatSelectedSurvivalFood() {
+            if (!survivalActive || survivalHp <= 0 || survivalEatTimer > 0) return;
+            const slot = selectedSurvivalItem();
+            const def = slot ? SURVIVAL_ITEM_DEFS[slot.id] : null;
+            if (!def || !def.food) {
+                showSurvivalToast('Select food first');
+                return;
+            }
+            if (survivalHp >= 100) {
+                showSurvivalToast('HP already full');
+                return;
+            }
+            survivalEatingItem = slot.id;
+            survivalEatTimer = 32;
+            if (slot.id === 'apple') survivalApples = Math.max(0, survivalApples - 1);
+            removeSurvivalItemFromSlot(survivalSelectedSlot, 1);
+            const healed = Math.min(def.heal, 100 - survivalHp);
+            survivalHp += healed;
+            showSurvivalToast(`+${Math.round(healed)} HP (${def.name.toLowerCase()})`);
+            updateSurvivalHud();
+        }
+
+        function eatSurvivalApple() {
+            if (!survivalActive || survivalHp <= 0) return;
+            if (survivalApples <= 0) {
+                showSurvivalToast('No apples');
+                return;
+            }
+            if (survivalHp >= 100) {
+                showSurvivalToast('HP already full');
+                return;
+            }
+            survivalApples -= 1;
+            const healed = Math.min(32, 100 - survivalHp);
+            survivalHp += healed;
+            showSurvivalToast(`+${Math.round(healed)} HP (apple)`);
+            updateSurvivalHud();
         }
 
         function startSurvivalMawGrab(maw) {
@@ -13406,9 +14483,15 @@ let scene, camera, renderer, controls, raycaster, mouse, ground, grid;
                         bestTree.userData.fallAngle = 0;
                         bestTree.userData.hp = 9999;
                         survivalWood += 2;
+                        addSurvivalItem('wood', 2);
+                        const foundApple = Math.random() < 0.21;
+                        if (foundApple) {
+                            survivalApples += 1;
+                            addSurvivalItem('apple', 1);
+                        }
                         survivalChopProgress = 0;
                         survivalChopTarget = null;
-                        showSurvivalToast('+2 🪵 Wood');
+                        showSurvivalToast(foundApple ? '+2 🪵 Wood, +1 🍎 Apple' : '+2 🪵 Wood');
                         updateSurvivalHud();
                     }
                 } else {
@@ -13423,96 +14506,29 @@ let scene, camera, renderer, controls, raycaster, mouse, ground, grid;
                 survivalChopTarget = null;
             }
 
-            // No tree in range — check if player has wood and is looking at empty ground
-            if (survivalWood >= 2) {
-                // Compute placement point in front of player
-                const placePos = new THREE.Vector3(
-                    playerPos.x + forward.x * 4,
-                    0,
-                    playerPos.z + forward.z * 4
-                );
-                // Check that no other object is too close to that spot
-                let blocked = false;
-                worldObjects.forEach(other => {
-                    if (other === bestTree) return;
-                    if (other.position.distanceTo(placePos) < 3) blocked = true;
-                });
-                if (!blocked) {
-                    if (isHolding && !survivalActionPressed) {
-                        // Place barrier (one-shot on press, not hold)
-                        survivalActionPressed = true;
-                        placeSurvivalBarrier(placePos, forward);
-                        survivalWood -= 2;
-                        showSurvivalToast('Barrier placed (-2 🪵)');
-                        updateSurvivalHud();
-                        prompt.classList.remove('visible');
-                        return;
-                    }
-                    prompt.innerText = '🧱 Press E to place barrier (2 🪵)';
-                    prompt.classList.add('visible');
-                    return;
+            const bestAnimal = findSurvivalLookTarget('animal', reach, 2.1);
+            if (bestAnimal) {
+                const ud = bestAnimal.userData;
+                const needed = ud.survivalPunchesToKill || 4;
+                const taken = ud.survivalPunchesTaken || 0;
+                prompt.innerText = `👊 Punch ${ud.species || 'animal'} (${Math.max(1, needed - taken)} left)`;
+                prompt.classList.add('visible');
+                return;
+            }
+
+            const selected = selectedSurvivalItem();
+            const selectedDef = selected ? SURVIVAL_ITEM_DEFS[selected.id] : null;
+            if (selectedDef && selectedDef.food && survivalHp < 100) {
+                if (isHolding) {
+                    eatSelectedSurvivalFood();
                 }
+                prompt.innerText = `Hold E or right click to eat ${selectedDef.name}`;
+                prompt.classList.add('visible');
+                return;
             }
 
             // Nothing to interact with
             prompt.classList.remove('visible');
-        }
-
-        function placeSurvivalBarrier(pos, forward) {
-            const group = new THREE.Group();
-            // Wooden barrier — 4 vertical posts and 2 horizontal planks
-            const woodMat = new THREE.MeshStandardMaterial({ color: 0x8b5a2b, roughness: 0.95 });
-            const darkWoodMat = new THREE.MeshStandardMaterial({ color: 0x5a3b1a, roughness: 1 });
-            const width = 6;
-            const height = 3.5;
-            // Posts
-            for (const dx of [-width/2, -1, 1, width/2]) {
-                const post = new THREE.Mesh(
-                    new THREE.CylinderGeometry(0.2, 0.25, height, 6),
-                    darkWoodMat
-                );
-                post.position.set(dx, height/2, 0);
-                post.castShadow = true;
-                group.add(post);
-                // Sharpened tip
-                const tip = new THREE.Mesh(
-                    new THREE.ConeGeometry(0.25, 0.5, 5),
-                    darkWoodMat
-                );
-                tip.position.set(dx, height + 0.25, 0);
-                group.add(tip);
-            }
-            // Horizontal planks
-            for (const dy of [1.0, 2.4]) {
-                const plank = new THREE.Mesh(
-                    new THREE.BoxGeometry(width + 0.4, 0.3, 0.2),
-                    woodMat
-                );
-                plank.position.set(0, dy, 0);
-                plank.castShadow = true;
-                group.add(plank);
-            }
-
-            // Orient the barrier perpendicular to the player's forward direction
-            // (so the wall faces the player). Forward is in XZ plane.
-            const yaw = Math.atan2(forward.x, forward.z);
-            // The barrier's wall plane is its X axis; we want X perpendicular to forward,
-            // so rotate by yaw + π/2.
-            group.rotation.y = yaw + Math.PI / 2;
-            group.position.copy(pos);
-
-            group.userData = {
-                type: 'barrier',
-                hp: 200,
-                maxHp: 200,
-                velocity: new THREE.Vector3(),
-                onFire: false,
-                burnLevel: 0,
-                isStatic: true,
-                lifeTime: 0
-            };
-            scene.add(group);
-            worldObjects.push(group);
         }
 
         function showSurvivalToast(text) {
@@ -13523,6 +14539,7 @@ let scene, camera, renderer, controls, raycaster, mouse, ground, grid;
             msg.style.padding = '16px 30px';
             msg.classList.add('visible');
             setTimeout(() => {
+                if (!survivalActive || msg.innerText !== text) return;
                 msg.classList.remove('visible');
                 // Restore default styling for warnings
                 msg.style.background = '';
@@ -13551,7 +14568,7 @@ let scene, camera, renderer, controls, raycaster, mouse, ground, grid;
             }
 
             const choices = [
-                'tornado', 'vortex', 'volcano', 'maw', 'kraken', 'leviathan',
+                'vortex', 'volcano', 'maw', 'kraken', 'leviathan',
                 'battleship', 'mothership', 'napalm', 'cluster'
             ];
             const choice = choices[Math.floor(Math.random() * choices.length)];
@@ -13580,22 +14597,31 @@ let scene, camera, renderer, controls, raycaster, mouse, ground, grid;
 
             // Show a warning
             const msg = document.getElementById('survival-message');
-            msg.innerText = '⚠️ ' + (choice === 'mothership' ? 'UFO' : choice.toUpperCase());
+            const warningText = '⚠️ ' + (choice === 'mothership' ? 'UFO' : choice.toUpperCase());
+            msg.innerText = warningText;
             msg.classList.add('visible');
-            setTimeout(() => msg.classList.remove('visible'), 1500);
+            setTimeout(() => {
+                if (survivalActive && msg.innerText === warningText) msg.classList.remove('visible');
+            }, 1500);
         }
 
         function survivalDeath() {
             if (!survivalActive) return; // already dead
             survivalActive = false;
+            if (survivalHands) survivalHands.visible = false;
+            document.getElementById('survival-prompt').classList.remove('visible');
             const elapsed = Math.floor((performance.now() - survivalStartTime) / 1000);
             const msg = document.getElementById('survival-message');
-            msg.innerHTML = '💀 You died<br><span style="font-size:1.1rem;font-weight:normal">Survived ' + elapsed + 's</span>';
+            const cause = survivalLastDamageCause || 'unknown disaster';
+            msg.innerHTML = `
+                <div class="survival-death-title">You died</div>
+                <div class="survival-death-detail">Killed by ${cause}</div>
+                <div class="survival-death-detail">Survived ${elapsed}s</div>
+                <button type="button" id="survival-respawn" class="survival-respawn-btn">Respawn</button>
+            `;
             msg.classList.add('visible');
-            setTimeout(() => {
-                msg.classList.remove('visible');
-                document.getElementById('survival-exit').click();
-            }, 3500);
+            const respawnBtn = document.getElementById('survival-respawn');
+            if (respawnBtn) respawnBtn.onclick = respawnSurvival;
         }
 
         // Bootstrapping: don't run init() immediately. Wait for a Start click.

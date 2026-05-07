@@ -1,8 +1,8 @@
 const moveButtons = [
-  ["up", "ArrowUp", "▲"],
-  ["left", "ArrowLeft", "◀"],
-  ["down", "ArrowDown", "▼"],
-  ["right", "ArrowRight", "▶"],
+  ["up", "KeyW", "▲"],
+  ["left", "KeyA", "◀"],
+  ["down", "KeyS", "▼"],
+  ["right", "KeyD", "▶"],
   ["punch", "Digit1", "👊"],
   ["action", "KeyE", "🪓"],
 ];
@@ -18,10 +18,24 @@ export function SurvivalHud() {
           </div>
         </div>
         <div className="stat">
-          🪵 Wood: <span id="survival-wood">0</span>
+          Inventory: 🪵 <span id="survival-wood">0</span> 🍎 <span id="survival-apples">0</span>
         </div>
         <div className="stat">
           ⏱️ <span id="survival-time">0s</span>
+        </div>
+        <div className="survival-hotbar" id="survival-hotbar" aria-label="Inventory hotbar">
+          {Array.from({ length: 9 }, (_, index) => (
+            <button
+              type="button"
+              className={`inventory-slot${index === 0 ? " selected" : ""}`}
+              data-slot={index}
+              aria-label={`Inventory slot ${index + 1}`}
+              key={index}
+            >
+              <span className="slot-item" />
+              <span className="slot-count" />
+            </button>
+          ))}
         </div>
         <button className="exit-btn" id="survival-exit">
           Exit

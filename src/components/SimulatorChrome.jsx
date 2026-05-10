@@ -35,6 +35,7 @@ const destroyTools = [
   ["btn-kraken", "🦑", "Kraken"],
   ["btn-maw", "🦷", "Maw"],
   ["btn-human-eater", "🌿", "Human Eater"],
+  ["btn-titanx", "🐍", "Sky Leviathan"],
 ];
 
 function ToolButton({ id, className, icon, label }) {
@@ -67,6 +68,7 @@ export function SimulatorChrome() {
           <HeaderButton id="btn-generate" icon="🌱" label="Generate" />
           <HeaderButton id="btn-ocean" icon="🌊" label="Ocean" />
           <HeaderButton id="btn-village" icon="🏘️" label="Generate Village" />
+          <HeaderButton id="btn-relocate" icon="📍" label="Relocate" />
           <HeaderButton id="btn-daynight" icon="☀️" label="Day/Night" />
           <HeaderButton id="btn-toggle" icon="⚙️" label="Toggle UI" />
           <HeaderButton id="btn-clear" icon="♻️" label="Reset" className="purge" />

@@ -32,6 +32,8 @@ let scene, camera, renderer, controls, raycaster, mouse, ground, grid;
         let cyclopses = []; // array of { mesh, target, age, lifeMax, ... }
         let groundMaws = []; // array of ground mouths with four dragging tentacles
         let humanEaters = []; // planted flytrap-like mouths that snap up people
+        let titanXs = []; // airborne serpent titans with seeking sensory fronds
+        let titanXResidue = []; // lingering roofless wreckage and frond scorch marks left by Sky Leviathan
 
         // Day/night cycle: phase 0..1 where 0=midnight, 0.25=sunrise, 0.5=noon, 0.75=sunset
         let dayPhase = 0.35; // start in morning
@@ -64,7 +66,6 @@ let scene, camera, renderer, controls, raycaster, mouse, ground, grid;
             new THREE.SphereGeometry(0.5, 7, 5),
             new THREE.SphereGeometry(0.72, 8, 6)
         ];
-
         function syncWorldObjectSet() {
             if (worldObjectSet.size !== worldObjects.length) {
                 worldObjectSet = new Set(worldObjects);
@@ -177,7 +178,7 @@ let scene, camera, renderer, controls, raycaster, mouse, ground, grid;
         }
 
         // Build/destroy tools
-        const DESTROY_TOOLS = new Set(['fire','vortex','tornado','whirlpool','quake','tsunami','volcano','lavaflood','napalm','cluster','nuke','blackhole','meteor','cracker','battleship','mothership','leviathan','kraken','maw','human-eater']);
+        const DESTROY_TOOLS = new Set(['fire','vortex','tornado','whirlpool','quake','tsunami','volcano','lavaflood','napalm','cluster','nuke','blackhole','meteor','cracker','battleship','mothership','leviathan','kraken','maw','human-eater','titanx']);
 
         function addMultiTarget(pt) {
             multiTargets.push(pt.clone());
@@ -2324,6 +2325,8 @@ let scene, camera, renderer, controls, raycaster, mouse, ground, grid;
                 spawnGroundMaw(pt);
             } else if (type === 'human-eater') {
                 spawnHumanEater(pt);
+            } else if (type === 'titanx') {
+                spawnTitanX(pt);
             } else if (type === 'vortex') {
                 spawnLightningVortex(pt);
             } else if (type === 'tornado') {
@@ -5680,6 +5683,440 @@ let scene, camera, renderer, controls, raycaster, mouse, ground, grid;
             }
         }
 
+
+        // ===== SKY LEVIATHAN: airborne Tiamat serpent with sensory fronds =====
+        function makeTitanXHead(scale, mats) {
+            const head = new THREE.Group();
+            const skull = new THREE.Mesh(new THREE.SphereGeometry(2.25 * scale, 20, 12), mats.hide.clone());
+            skull.scale.set(0.72, 0.48, 1.95);
+            skull.position.z = 1.55 * scale;
+            skull.castShadow = true;
+            head.add(skull);
+
+            const snout = new THREE.Mesh(new THREE.CylinderGeometry(0.72 * scale, 1.1 * scale, 3.9 * scale, 9), mats.hide.clone());
+            snout.rotation.x = Math.PI / 2;
+            snout.position.z = 3.25 * scale;
+            snout.scale.set(0.7, 1, 0.52);
+            snout.castShadow = true;
+            head.add(snout);
+
+            const jawTop = new THREE.Mesh(new THREE.BoxGeometry(1.65 * scale, 0.34 * scale, 3.2 * scale), mats.inner.clone());
+            jawTop.position.set(0, 0.14 * scale, 3.25 * scale);
+            jawTop.rotation.x = -0.08;
+            head.add(jawTop);
+            const jawBottom = jawTop.clone();
+            jawBottom.position.y = -0.72 * scale;
+            jawBottom.rotation.x = 0.18;
+            head.add(jawBottom);
+
+            for (let i = 0; i < 24; i++) {
+                const side = i % 2 === 0 ? -1 : 1;
+                const row = i % 4 < 2 ? 0 : 1;
+                const z = 1.72 * scale + Math.floor(i / 2) * 0.25 * scale;
+                const fang = new THREE.Mesh(new THREE.ConeGeometry(0.11 * scale, (0.62 + Math.random() * 0.38) * scale, 5), mats.tooth.clone());
+                fang.position.set(side * (0.45 + row * 0.25) * scale, row ? -0.38 * scale : 0.03 * scale, z);
+                fang.rotation.x = row ? 0.42 : Math.PI - 0.36;
+                fang.rotation.z = side * 0.22;
+                head.add(fang);
+            }
+
+            for (const side of [-1, 1]) {
+                const eye = new THREE.Mesh(new THREE.SphereGeometry(0.18 * scale, 10, 6), mats.eye.clone());
+                eye.position.set(side * 0.68 * scale, 0.34 * scale, 2.75 * scale);
+                eye.scale.set(1, 0.58, 0.45);
+                head.add(eye);
+            }
+
+            for (let i = 0; i < 9; i++) {
+                const side = i % 2 === 0 ? -1 : 1;
+                const root = new THREE.Vector3(side * (0.3 + Math.random() * 0.55) * scale, -0.4 * scale, (2.1 + Math.random() * 2.1) * scale);
+                const tip = root.clone().add(new THREE.Vector3(side * (0.25 + Math.random() * 0.5) * scale, -(1.4 + Math.random() * 1.7) * scale, -Math.random() * 0.45 * scale));
+                const frond = new THREE.Mesh(new THREE.TubeGeometry(new THREE.CatmullRomCurve3([root, root.clone().lerp(tip, 0.45).add(new THREE.Vector3(0, -0.4 * scale, 0)), tip]), 7, 0.055 * scale, 5, false), mats.frond.clone());
+                head.add(frond);
+            }
+            return head;
+        }
+
+        function spawnTitanXResidue(pos, radius = 12) {
+            // Sky Leviathan should not leave lingering pink debris on the map.
+        }
+
+        function refreshTitanXTube(mesh, points, radius, radialSegments = 8) {
+            mesh.geometry.dispose();
+            mesh.geometry = new THREE.TubeGeometry(new THREE.CatmullRomCurve3(points), Math.max(8, points.length * 5), radius, radialSegments, false);
+        }
+
+        function spawnTitanX(pt) {
+            const origin = pt.clone();
+            explode(origin.clone().add(new THREE.Vector3(0, 8, 0)), 18, 0x7a2a6d);
+            const root = new THREE.Group();
+            root.position.set(origin.x, 94, origin.z);
+            root.scale.setScalar(0.12);
+            scene.add(root);
+
+            const mats = {
+                hide: new THREE.MeshStandardMaterial({ color: 0x191020, roughness: 0.92, metalness: 0.04, emissive: 0x18091f, emissiveIntensity: 0.35 }),
+                ridge: new THREE.MeshStandardMaterial({ color: 0x2d1836, roughness: 0.95, emissive: 0x140814, emissiveIntensity: 0.22 }),
+                spine: new THREE.MeshStandardMaterial({ color: 0x35243d, roughness: 0.82, emissive: 0x120a18, emissiveIntensity: 0.18 }),
+                frond: new THREE.MeshStandardMaterial({ color: 0xd86f9f, roughness: 0.55, emissive: 0x54112f, emissiveIntensity: 0.52 }),
+                inner: new THREE.MeshStandardMaterial({ color: 0x7e2448, roughness: 0.65, emissive: 0x5a1034, emissiveIntensity: 0.8 }),
+                tooth: new THREE.MeshStandardMaterial({ color: 0xdde7ef, roughness: 0.32, transparent: true, opacity: 0.82 }),
+                eye: new THREE.MeshStandardMaterial({ color: 0xdbe9e8, emissive: 0xb8fff3, emissiveIntensity: 1.45 })
+            };
+
+            const body = new THREE.Group();
+            root.add(body);
+            const segments = [];
+            const segmentCount = 23;
+            for (let i = 0; i < segmentCount; i++) {
+                const t = i / (segmentCount - 1);
+                const local = new THREE.Vector3(Math.sin(t * Math.PI * 2.4) * 16, Math.sin(t * Math.PI * 3.2) * 4, 46 - t * 122);
+                const radius = 7.8 - t * 3.8;
+                const seg = new THREE.Mesh(new THREE.SphereGeometry(radius, 16, 9), i % 4 === 0 ? mats.ridge.clone() : mats.hide.clone());
+                seg.position.copy(local);
+                seg.scale.set(1.35 - t * 0.35, 0.58, 1.05);
+                seg.castShadow = true;
+                seg.receiveShadow = true;
+                body.add(seg);
+
+                const spines = [];
+                if (i > 1 && i < segmentCount - 2) {
+                    for (const side of [-1, 1]) {
+                        const spine = new THREE.Mesh(new THREE.ConeGeometry(0.9 + (1 - t) * 0.65, 7.5 + (1 - t) * 4.5, 6), mats.spine.clone());
+                        spine.position.set(local.x + side * radius * 1.1, local.y + 0.15, local.z - 1.2);
+                        spine.rotation.z = side * Math.PI / 2;
+                        spine.rotation.x = -0.45;
+                        spine.castShadow = true;
+                        body.add(spine);
+                        spines.push(spine);
+                    }
+                }
+
+                const fronds = [];
+                if (i % 2 === 0) {
+                    for (let f = 0; f < 2; f++) {
+                        const side = f === 0 ? -1 : 1;
+                        const len = 6 + Math.random() * 9;
+                        const rootLocal = local.clone().add(new THREE.Vector3(side * radius * 0.45, -radius * 0.42, 0));
+                        const tip = rootLocal.clone().add(new THREE.Vector3(side * (1.5 + Math.random() * 2.8), -len, -1 - Math.random() * 3));
+                        const frond = new THREE.Mesh(new THREE.TubeGeometry(new THREE.CatmullRomCurve3([rootLocal, rootLocal.clone().lerp(tip, 0.45).add(new THREE.Vector3(0, -2, 0)), tip]), 8, 0.16, 5, false), mats.frond.clone());
+                        body.add(frond);
+                        fronds.push({ mesh: frond, rootLocal, len, side, phase: Math.random() * 100 });
+                    }
+                }
+                segments.push({ mesh: seg, local, spines, fronds, phase: Math.random() * 100, radius });
+            }
+
+            const mainHead = makeTitanXHead(3.1, mats);
+            mainHead.position.set(0, 1, 58);
+            body.add(mainHead);
+
+            const bodyConnectors = [];
+            for (let i = 0; i < segmentCount - 1; i++) {
+                const a = segments[i];
+                const b = segments[i + 1];
+                const radius = Math.max(2.4, Math.min(a.radius, b.radius) * 0.58);
+                const connector = new THREE.Mesh(
+                    new THREE.TubeGeometry(new THREE.CatmullRomCurve3([a.mesh.position.clone(), b.mesh.position.clone()]), 10, radius, 8, false),
+                    (i % 4 === 0 ? mats.ridge : mats.hide).clone()
+                );
+                connector.castShadow = true;
+                connector.receiveShadow = true;
+                body.add(connector);
+                bodyConnectors.push({ mesh: connector, from: i, to: i + 1, radius });
+            }
+
+            const neckConnector = new THREE.Mesh(
+                new THREE.TubeGeometry(new THREE.CatmullRomCurve3([
+                    segments[0].mesh.position.clone().add(new THREE.Vector3(0, 0.4, 4.6)),
+                    mainHead.position.clone().add(new THREE.Vector3(0, -0.1, -4.8))
+                ]), 10, 3.8, 9, false),
+                mats.hide.clone()
+            );
+            neckConnector.castShadow = true;
+            neckConnector.receiveShadow = true;
+            body.add(neckConnector);
+
+            const light = new THREE.PointLight(0xff77b6, 2.8, 210);
+            light.position.set(origin.x, 54, origin.z);
+            scene.add(light);
+
+            const tendrils = [];
+            for (let i = 0; i < 12; i++) {
+                const anchorSegIndex = 3 + (i * 2) % 16;
+                const anchorSeg = segments[anchorSegIndex];
+                const side = i % 2 === 0 ? -1 : 1;
+                const anchorOffset = new THREE.Vector3(
+                    side * anchorSeg.radius * anchorSeg.mesh.scale.x * (0.18 + Math.random() * 0.18),
+                    -anchorSeg.radius * anchorSeg.mesh.scale.y * 0.72,
+                    (Math.random() - 0.5) * anchorSeg.radius * 0.44
+                );
+                const anchor = anchorSeg.mesh.position.clone().add(anchorOffset);
+                const mesh = new THREE.Mesh(new THREE.TubeGeometry(new THREE.CatmullRomCurve3([anchor, anchor.clone().add(new THREE.Vector3(0, -15, 0))]), 10, 0.42, 7, false), mats.frond.clone());
+                body.add(mesh);
+                const rootCap = new THREE.Mesh(
+                    new THREE.SphereGeometry(1.18, 10, 7),
+                    mats.frond.clone()
+                );
+                rootCap.position.copy(anchor);
+                rootCap.scale.set(1.35, 0.55, 1.0);
+                body.add(rootCap);
+                tendrils.push({ mesh, rootCap, anchor, anchorSegIndex, anchorOffset, tipWorld: origin.clone().add(new THREE.Vector3((Math.random() - 0.5) * 80, 20, (Math.random() - 0.5) * 80)), target: null, cooldown: i * 9, phase: Math.random() * 100 });
+            }
+
+            titanXs.push({ root, body, segments, bodyConnectors, neckConnector, tendrils, mainHead, light, pt: origin.clone(), age: 0, hp: 3600, maxHp: 3600, phase: 'descend', phaseTimer: 0, radius: 210, moanTimer: 120, lifeMax: 1800, driftAngle: Math.random() * Math.PI * 2 });
+            showMessage('Sky Leviathan slides through the air like a river with teeth');
+        }
+
+        function getTitanXMouthWorld(titan) {
+            return titan.mainHead.localToWorld(new THREE.Vector3(0, -3.4, 14.5));
+        }
+
+        function findTitanXTarget(titan, tendril) {
+            let best = null;
+            let bestScore = Infinity;
+            worldObjects.forEach(obj => {
+                if (!obj.userData || obj.userData.hp <= 0 || obj.userData.frozen || obj.userData.beingGrabbed) return;
+                if (obj.userData.type !== 'human' && obj.userData.type !== 'builder' && obj.userData.type !== 'animal') return;
+                const dist = obj.position.distanceTo(titan.pt);
+                if (dist > titan.radius) return;
+                const priority = obj.userData.type === 'animal' ? -80 : -100;
+                const score = tendril.tipWorld.distanceTo(obj.position) * 0.7 + dist * 0.3 + priority;
+                if (score < bestScore) {
+                    bestScore = score;
+                    best = obj;
+                }
+            });
+            return best;
+        }
+
+        function damageTitanXTarget(target, hitPos, heavy = false) {
+            if (!target || !target.userData) return;
+            const type = target.userData.type;
+            if (type === 'human' || type === 'builder' || type === 'animal') {
+                target.userData.hp = 0;
+            } else {
+                target.userData.hp -= heavy ? 190 : 70;
+                target.userData.settled = false;
+                if (type === 'tree' && !target.userData.isFalling && !target.userData.hasFallen) {
+                    target.userData.isFalling = true;
+                    target.userData.fallAxis = new THREE.Vector3(target.position.x - hitPos.x, 0, target.position.z - hitPos.z).normalize();
+                    target.userData.fallAngle = 0;
+                    target.userData.hp = Math.max(target.userData.hp, 1);
+                }
+                if (canBurnObject(target) && Math.random() < 0.18) target.userData.onFire = true;
+                shatter(hitPos.clone().add(new THREE.Vector3(0, 4, 0)), heavy ? 12 : 5, heavy ? 0x8a4a76 : 0xd979a6, heavy ? 0.8 : 0.42);
+            }
+        }
+
+        function releaseTitanXTarget(tendril) {
+            if (!tendril.target || !tendril.target.userData) {
+                tendril.target = null;
+                return;
+            }
+            tendril.target.userData.beingGrabbed = false;
+            tendril.target.userData.frozen = false;
+            tendril.target = null;
+        }
+
+        function eatTitanXTarget(titan, tendril) {
+            const target = tendril.target;
+            if (!target) return;
+            releaseTitanXTarget(tendril);
+            removeWorldObject(target);
+            tendril.cooldown = 0;
+            titan.light.intensity = 5.8;
+        }
+
+        function updateTitanXTendril(titan, tendril, ti) {
+            tendril.cooldown++;
+            if (typeof tendril.anchorSegIndex === 'number' && titan.segments[tendril.anchorSegIndex]) {
+                const anchorSeg = titan.segments[tendril.anchorSegIndex];
+                tendril.anchor.copy(anchorSeg.mesh.position).add(tendril.anchorOffset);
+                if (tendril.rootCap) {
+                    tendril.rootCap.position.copy(tendril.anchor);
+                    tendril.rootCap.rotation.y = anchorSeg.mesh.rotation.y;
+                    tendril.rootCap.rotation.z = anchorSeg.mesh.rotation.z;
+                }
+            }
+            titan.root.updateMatrixWorld(true);
+            const anchorWorld = titan.body.localToWorld(tendril.anchor.clone());
+            if (titan.phase === 'attack' && (!tendril.target || !isWorldObject(tendril.target) || tendril.target.userData.hp <= 0)) {
+                releaseTitanXTarget(tendril);
+            }
+            if (titan.phase === 'attack' && !tendril.target && tendril.cooldown > 34) {
+                tendril.target = findTitanXTarget(titan, tendril);
+                if (tendril.target) {
+                    tendril.target.userData.beingGrabbed = true;
+                    tendril.target.userData.frozen = true;
+                }
+                tendril.cooldown = 0;
+            }
+
+            let desired;
+            if (titan.phase === 'leaving') {
+                desired = anchorWorld.clone().add(new THREE.Vector3(0, 24, 0));
+            } else if (tendril.target) {
+                const mouth = getTitanXMouthWorld(titan);
+                const target = tendril.target;
+                const targetHeight = target.userData.totalHeight || target.userData.dimensions?.height || 4;
+                const grabPoint = target.position.clone();
+                grabPoint.y += Math.max(1.4, Math.min(5, targetHeight * 0.55));
+                desired = grabPoint.lerp(mouth, Math.min(0.88, tendril.cooldown / 46));
+                const toMouth = new THREE.Vector3().subVectors(mouth, target.position);
+                const pullDist = toMouth.length();
+                if (pullDist > 0.1) target.position.addScaledVector(toMouth.normalize(), Math.min(2.2, 0.42 + tendril.cooldown * 0.018));
+                target.rotation.x += 0.035;
+                target.rotation.z += 0.045;
+                target.scale.multiplyScalar(0.994);
+                if (pullDist < 6 || target.scale.x < 0.35) eatTitanXTarget(titan, tendril);
+            } else {
+                const a = titan.driftAngle + ti * 0.72 + Math.sin(titan.age * 0.017 + tendril.phase) * 0.8;
+                const r = 35 + (ti % 5) * 12 + Math.sin(titan.age * 0.025 + ti) * 10;
+                desired = titan.pt.clone().add(new THREE.Vector3(Math.cos(a) * r, 14 + Math.sin(titan.age * 0.04 + tendril.phase) * 13, Math.sin(a) * r));
+            }
+            tendril.tipWorld.lerp(desired, tendril.target ? 0.22 : 0.08);
+            const midA = anchorWorld.clone().lerp(tendril.tipWorld, 0.35).add(new THREE.Vector3(Math.sin(titan.age * 0.05 + ti) * 9, -10, Math.cos(titan.age * 0.044 + ti) * 9));
+            const midB = anchorWorld.clone().lerp(tendril.tipWorld, 0.72).add(new THREE.Vector3(Math.cos(titan.age * 0.04 + tendril.phase) * 7, -5, Math.sin(titan.age * 0.047 + tendril.phase) * 7));
+            const localPoints = [anchorWorld, midA, midB, tendril.tipWorld].map(p => titan.body.worldToLocal(p.clone()));
+            tendril.mesh.geometry.dispose();
+            tendril.mesh.geometry = new THREE.TubeGeometry(new THREE.CatmullRomCurve3(localPoints), 18, titan.phase === 'leaving' ? 0.18 : 0.42, 7, false);
+        }
+
+        function fireTitanXMoan(titan) {
+            const center = titan.pt.clone();
+            center.y = 14;
+            const shock = new THREE.Mesh(
+                new THREE.SphereGeometry(1, 24, 12),
+                new THREE.MeshBasicMaterial({ color: 0xf3a3c7, transparent: true, opacity: 0.28, wireframe: true })
+            );
+            shock.position.copy(center);
+            shock.userData = { vel: new THREE.Vector3(), life: 0.45, settled: true, hp: 1, onFire: false };
+            shock.scale.set(18, 1.2, 18);
+            scene.add(shock);
+            fireParticles.push(shock);
+            applyBlast(center, 70, 2.1, 0.55, 210, false);
+            worldObjects.forEach(obj => {
+                if (!obj.userData || obj.userData.hp <= 0 || obj.userData.type === 'road') return;
+                if (obj.userData.type === 'human' || obj.userData.type === 'builder' || obj.userData.type === 'animal') return;
+                const d = obj.position.distanceTo(titan.pt);
+                if (d < titan.radius * 0.72) damageTitanXTarget(obj, obj.position.clone(), d < 75);
+            });
+            titan.light.intensity = 6.5;
+            showMessage('Sky Leviathan releases a subsonic moan that folds the village inward');
+        }
+
+        function removeTitanX(titan) {
+            titan.tendrils.forEach(releaseTitanXTarget);
+            scene.remove(titan.root);
+            scene.remove(titan.light);
+            titan.root.traverse(c => {
+                if (!c.isMesh) return;
+                if (c.geometry) c.geometry.dispose();
+                if (Array.isArray(c.material)) c.material.forEach(m => m.dispose());
+                else if (c.material) c.material.dispose();
+            });
+        }
+
+        function despawnAllTitanXs() {
+            titanXs.forEach(removeTitanX);
+            titanXs = [];
+            titanXResidue.forEach(residue => {
+                scene.remove(residue);
+                residue.traverse(c => {
+                    if (!c.isMesh) return;
+                    if (c.geometry) c.geometry.dispose();
+                    if (Array.isArray(c.material)) c.material.forEach(m => m.dispose());
+                    else if (c.material) c.material.dispose();
+                });
+            });
+            titanXResidue = [];
+        }
+
+        function updateTitanXs() {
+            for (let i = titanXs.length - 1; i >= 0; i--) {
+                const titan = titanXs[i];
+                titan.age++;
+                titan.phaseTimer++;
+                if (titan.phase === 'descend') {
+                    const p = Math.min(1, titan.phaseTimer / 120);
+                    const eased = p * p * (3 - 2 * p);
+                    titan.root.scale.setScalar(0.12 + eased * 0.88);
+                    titan.root.position.y = 96 - eased * 44;
+                    titan.light.intensity = 1.2 + eased * 3.5;
+                    if (p >= 1) {
+                        titan.phase = 'attack';
+                        titan.phaseTimer = 0;
+                    }
+                } else if (titan.age >= titan.lifeMax) {
+                    removeTitanX(titan);
+                    titanXs.splice(i, 1);
+                    continue;
+                } else if ((titan.hp <= 0 || titan.age > titan.lifeMax) && titan.phase !== 'leaving') {
+                    titan.phase = 'leaving';
+                    titan.phaseTimer = 0;
+                    showMessage('Sky Leviathan threads herself back through the upper air');
+                } else if (titan.phase === 'leaving' && titan.phaseTimer > 150) {
+                    removeTitanX(titan);
+                    titanXs.splice(i, 1);
+                    continue;
+                }
+
+                titan.driftAngle += 0.0035;
+                const coilR = titan.phase === 'attack' ? 10 + Math.sin(titan.age * 0.011) * 7 : 4;
+                titan.root.position.x = titan.pt.x + Math.cos(titan.age * 0.008 + titan.driftAngle) * coilR;
+                titan.root.position.z = titan.pt.z + Math.sin(titan.age * 0.008 + titan.driftAngle) * coilR;
+                if (titan.phase === 'leaving') titan.root.position.y += 0.34;
+
+                titan.segments.forEach((seg, si) => {
+                    const wave = Math.sin(titan.age * 0.035 + si * 0.58 + seg.phase);
+                    seg.mesh.position.x = seg.local.x + wave * 5.4;
+                    seg.mesh.position.y = seg.local.y + Math.cos(titan.age * 0.03 + si * 0.47) * 2.4;
+                    seg.mesh.rotation.y = wave * 0.28;
+                    seg.mesh.rotation.z = Math.cos(titan.age * 0.028 + si * 0.5) * 0.12;
+                    seg.spines.forEach((spine, pi) => {
+                        spine.position.x = seg.mesh.position.x + (pi === 0 ? -1 : 1) * seg.radius * 1.1;
+                        spine.position.y = seg.mesh.position.y + 0.15;
+                        spine.position.z = seg.mesh.position.z - 1.2;
+                        spine.rotation.y = seg.mesh.rotation.y * 0.5;
+                    });
+                    seg.fronds.forEach((frond, fi) => {
+                        const rootLocal = seg.mesh.position.clone().add(new THREE.Vector3(frond.side * seg.radius * 0.42, -seg.radius * 0.45, 0));
+                        const tip = rootLocal.clone().add(new THREE.Vector3(frond.side * (2 + Math.sin(titan.age * 0.055 + frond.phase) * 2.6), -frond.len, Math.cos(titan.age * 0.046 + fi + si) * 3));
+                        frond.mesh.geometry.dispose();
+                        frond.mesh.geometry = new THREE.TubeGeometry(new THREE.CatmullRomCurve3([rootLocal, rootLocal.clone().lerp(tip, 0.45).add(new THREE.Vector3(0, -2, 0)), tip]), 8, 0.16, 5, false);
+                    });
+                });
+                const leadSegment = titan.segments[0].mesh.position;
+                titan.mainHead.position.set(leadSegment.x, leadSegment.y + 1, leadSegment.z + 12);
+                titan.bodyConnectors.forEach(connector => {
+                    const a = titan.segments[connector.from].mesh.position;
+                    const b = titan.segments[connector.to].mesh.position;
+                    const mid = a.clone().lerp(b, 0.5);
+                    mid.y += Math.sin(titan.age * 0.026 + connector.from) * 0.55;
+                    refreshTitanXTube(connector.mesh, [a.clone(), mid, b.clone()], connector.radius, 8);
+                });
+                refreshTitanXTube(titan.neckConnector, [
+                    leadSegment.clone().add(new THREE.Vector3(0, 0.4, 4.8)),
+                    leadSegment.clone().lerp(titan.mainHead.position, 0.5).add(new THREE.Vector3(0, 0.1, 2.2)),
+                    titan.mainHead.position.clone().add(new THREE.Vector3(0, -0.2, -4.8))
+                ], 3.8, 9);
+                titan.mainHead.rotation.y = Math.sin(titan.age * 0.027) * 0.28;
+                titan.mainHead.rotation.x = Math.sin(titan.age * 0.038) * 0.08;
+                titan.light.position.set(titan.root.position.x, titan.root.position.y - 8, titan.root.position.z);
+                titan.light.intensity = Math.max(1.3, titan.light.intensity * 0.965) + Math.sin(titan.age * 0.07) * 0.18;
+
+                if (titan.phase === 'attack') {
+                    titan.moanTimer--;
+                    if (titan.moanTimer <= 0) {
+                        fireTitanXMoan(titan);
+                        titan.moanTimer = 240 + Math.floor(Math.random() * 150);
+                    }
+                }
+                titan.tendrils.forEach((tendril, ti) => updateTitanXTendril(titan, tendril, ti));
+            }
+        }
+
         function spawnLavaBomb(volcanoPt, ventY) {
             const bomb = new THREE.Mesh(
                 new THREE.SphereGeometry(0.7 + Math.random() * 0.6, 8, 6),
@@ -7462,6 +7899,16 @@ let scene, camera, renderer, controls, raycaster, mouse, ground, grid;
                     }
                 });
             }
+            titanXs.forEach(titan => {
+                if (titan.phase === 'leaving') return;
+                const distSq = titan.pt.distanceToSquared(center);
+                if (distSq < radiusSq) {
+                    const dist = Math.sqrt(distSq);
+                    const p = 1 - (dist / radius);
+                    titan.hp -= p * damage * 0.18;
+                    titan.light.intensity = Math.max(titan.light.intensity, 4);
+                }
+            });
         }
 
         // --- EARTHQUAKE: houses tilt and split, trees fall ---
@@ -8513,6 +8960,19 @@ let scene, camera, renderer, controls, raycaster, mouse, ground, grid;
             flyPitch = Math.asin(Math.max(-1, Math.min(1, dir.y)));
         }
 
+        function relocateToTestingPlace() {
+            flyVelForward = 0;
+            flyVelRight = 0;
+            flyVelUp = 0;
+            flyLookDX = 0;
+            flyLookDY = 0;
+            camera.position.set(0, 90, 120);
+            camera.lookAt(0, 0, 0);
+            controls.target.set(0, 0, 0);
+            initFlyCamera();
+            showMessage('Relocated inside the border');
+        }
+
         function isFlyMode() {
             return (gameMode === 'simulator' || gameMode === 'construction') && !tourActive;
         }
@@ -8602,6 +9062,7 @@ let scene, camera, renderer, controls, raycaster, mouse, ground, grid;
             updateKrakens();
             updateGroundMaws();
             updateHumanEaters();
+            updateTitanXs();
             updateConstruction();
             updateTour();
 
@@ -11075,7 +11536,7 @@ let scene, camera, renderer, controls, raycaster, mouse, ground, grid;
 
         function setupUI() {
             const buildIds = ['house', 'skyscraper', 'tree', 'streetlamp', 'human', 'builder', 'invader', 'animal', 'river', 'island', 'ship', 'mountain', 'eraser'];
-            const destroyIds = ['fire', 'vortex', 'tornado', 'whirlpool', 'quake', 'tsunami', 'volcano', 'lavaflood', 'napalm', 'cluster', 'nuke', 'blackhole', 'meteor', 'cracker', 'battleship', 'mothership', 'leviathan', 'kraken', 'maw', 'human-eater'];
+            const destroyIds = ['fire', 'vortex', 'tornado', 'whirlpool', 'quake', 'tsunami', 'volcano', 'lavaflood', 'napalm', 'cluster', 'nuke', 'blackhole', 'meteor', 'cracker', 'battleship', 'mothership', 'leviathan', 'kraken', 'maw', 'human-eater', 'titanx'];
             const ids = [...buildIds, ...destroyIds];
 
             const selectTool = (id, el) => {
@@ -11105,6 +11566,7 @@ let scene, camera, renderer, controls, raycaster, mouse, ground, grid;
                 if (id === 'animal') hint = ' · random species, wanders';
                 if (id === 'maw') hint = ' · 20 second feeding attack';
                 if (id === 'human-eater') hint = ' · bends forward and snaps up people';
+                if (id === 'titanx') hint = ' · airborne Tiamat serpent with seeking pink fronds';
                 showMessage('Selected: ' + label + hint);
             };
 
@@ -11186,6 +11648,9 @@ let scene, camera, renderer, controls, raycaster, mouse, ground, grid;
 
             // Random village: clears the world and builds a generic village
             document.getElementById('btn-village').onclick = () => generateRandomVillage();
+
+            // Relocate camera back to the central testing area inside the border
+            document.getElementById('btn-relocate').onclick = () => relocateToTestingPlace();
 
             // Day/Night toggle: cycles Auto → Day → Night → Auto
             const dayNightBtn = document.getElementById('btn-daynight');
@@ -11272,6 +11737,7 @@ let scene, camera, renderer, controls, raycaster, mouse, ground, grid;
                 krakens = [];
                 despawnAllGroundMaws();
                 despawnAllHumanEaters();
+                despawnAllTitanXs();
                 despawnAllTornadoes();
                 despawnAllLightningVortices();
                 despawnAllTsunamis();
@@ -11387,6 +11853,7 @@ let scene, camera, renderer, controls, raycaster, mouse, ground, grid;
             krakens = [];
             despawnAllGroundMaws();
             despawnAllHumanEaters();
+            despawnAllTitanXs();
             octopuses = [];
             removeMonarch();
             ancientBattleships.forEach(bs => removeAncientBattleship(bs));
@@ -14334,6 +14801,22 @@ let scene, camera, renderer, controls, raycaster, mouse, ground, grid;
                     applySurvivalDamage(dmg, 'leviathan proximity', 850, `leviathan:${idx}`);
                 }
             });
+
+            titanXs.forEach((titan, idx) => {
+                if (titan.phase !== 'attack') return;
+                const dCore = playerPos.distanceTo(titan.pt);
+                if (dCore < 82) {
+                    applySurvivalDamage(26, 'Sky Leviathan pressure wake', 1000, `titanx-core:${idx}`);
+                }
+                titan.tendrils.forEach((tendril, ti) => {
+                    const tip = new THREE.Vector3(tendril.tipWorld.x, 0, tendril.tipWorld.z);
+                    const dTip = playerPos.distanceTo(tip);
+                    if (dTip < 18) {
+                        const dmg = Math.round(18 + (1 - Math.min(1, dTip / 18)) * 38);
+                        applySurvivalDamage(dmg, 'Sky Leviathan frond', 850, `titanx-frond:${idx}:${ti}`);
+                    }
+                });
+            });
         }
 
         function updateSurvivalHud() {
@@ -14568,7 +15051,7 @@ let scene, camera, renderer, controls, raycaster, mouse, ground, grid;
             }
 
             const choices = [
-                'vortex', 'volcano', 'maw', 'kraken', 'leviathan',
+                'vortex', 'volcano', 'maw', 'kraken', 'leviathan', 'titanx',
                 'battleship', 'mothership', 'napalm', 'cluster'
             ];
             const choice = choices[Math.floor(Math.random() * choices.length)];
@@ -14585,6 +15068,8 @@ let scene, camera, renderer, controls, raycaster, mouse, ground, grid;
                 spawnKraken(targetPt);
             } else if (choice === 'leviathan') {
                 spawnLeviathan(targetPt);
+            } else if (choice === 'titanx') {
+                spawnTitanX(targetPt);
             } else if (choice === 'battleship') {
                 spawnAncientBattleship(targetPt);
             } else if (choice === 'mothership') {

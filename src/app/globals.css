@@ -407,6 +407,73 @@
             pointer-events: auto;
             min-height: 40px;
         }
+        #survival-hud .settings-btn {
+            background: rgba(17, 24, 39, 0.72);
+            color: white;
+            border: 1px solid rgba(255,255,255,0.24);
+            border-radius: 8px;
+            padding: 8px 12px;
+            cursor: pointer;
+            pointer-events: auto;
+            min-height: 40px;
+            white-space: nowrap;
+        }
+        #survival-hud .survival-settings-panel {
+            position: fixed;
+            top: max(62px, calc(env(safe-area-inset-top) + 58px));
+            right: max(12px, env(safe-area-inset-right));
+            width: min(330px, calc(100vw - 24px));
+            display: grid;
+            gap: 12px;
+            padding: 14px;
+            background: rgba(6, 10, 18, 0.86);
+            border: 1px solid rgba(255,255,255,0.22);
+            border-radius: 8px;
+            box-shadow: 0 16px 38px rgba(0,0,0,0.42);
+            backdrop-filter: blur(12px);
+            pointer-events: auto;
+        }
+        #survival-hud .survival-settings-panel.hidden { display: none; }
+        #survival-hud .survival-settings-panel h2 {
+            margin: 0;
+            font-size: 1rem;
+            line-height: 1.2;
+        }
+        #survival-hud .setting-row {
+            display: grid;
+            gap: 8px;
+            font-size: 0.9rem;
+        }
+        #survival-hud .setting-toggle {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 6px;
+        }
+        #survival-hud .setting-toggle button {
+            min-height: 36px;
+            border: 1px solid rgba(255,255,255,0.24);
+            border-radius: 6px;
+            background: rgba(255,255,255,0.08);
+            color: white;
+            cursor: pointer;
+            font-weight: 700;
+        }
+        #survival-hud .setting-toggle button.selected {
+            border-color: rgba(147, 197, 253, 0.92);
+            background: rgba(37, 99, 235, 0.58);
+        }
+        #survival-hud #survival-look-setting {
+            font-size: 0.95rem;
+        }
+        #survival-hud .setting-range input {
+            width: 100%;
+            accent-color: #60a5fa;
+            cursor: pointer;
+        }
+        #survival-hud .setting-range strong {
+            font-size: 0.86rem;
+            color: #bfdbfe;
+        }
 
         /* Mobile movement controls for survival */
         #survival-controls {

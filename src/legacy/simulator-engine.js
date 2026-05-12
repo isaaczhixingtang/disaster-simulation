@@ -32,6 +32,7 @@ let scene, camera, renderer, controls, raycaster, mouse, ground, grid;
         let cyclopses = []; // array of { mesh, target, age, lifeMax, ... }
         let groundMaws = []; // array of ground mouths with four dragging tentacles
         let humanEaters = []; // planted flytrap-like mouths that snap up people
+        let seaEaters = []; // ocean-only open-mouth siege creatures that feed for 20 seconds
         let titanXs = []; // airborne serpent titans with seeking sensory fronds
         let titanXResidue = []; // lingering roofless wreckage and frond scorch marks left by Sky Leviathan
 
@@ -178,7 +179,7 @@ let scene, camera, renderer, controls, raycaster, mouse, ground, grid;
         }
 
         // Build/destroy tools
-        const DESTROY_TOOLS = new Set(['fire','vortex','tornado','whirlpool','quake','tsunami','volcano','lavaflood','napalm','cluster','nuke','blackhole','meteor','cracker','battleship','mothership','leviathan','kraken','maw','human-eater','titanx']);
+        const DESTROY_TOOLS = new Set(['fire','vortex','tornado','whirlpool','quake','tsunami','volcano','lavaflood','napalm','cluster','nuke','blackhole','meteor','cracker','battleship','mothership','leviathan','kraken','maw','sea-eater','human-eater','titanx']);
 
         function addMultiTarget(pt) {
             multiTargets.push(pt.clone());
@@ -839,8 +840,10 @@ let scene, camera, renderer, controls, raycaster, mouse, ground, grid;
             return c.getHex();
         }
 
-        function buildTree(group) {
-            const species = TREE_SPECIES[Math.floor(Math.random() * TREE_SPECIES.length)];
+        function buildTree(group, forcedSpecies) {
+            const species = TREE_SPECIES.includes(forcedSpecies)
+                ? forcedSpecies
+                : TREE_SPECIES[Math.floor(Math.random() * TREE_SPECIES.length)];
 
             // Common: trunk metadata
             let trunkColor, trunkHeight, trunkRadiusBase, trunkRadiusTop;
@@ -1163,6 +1166,8 @@ let scene, camera, renderer, controls, raycaster, mouse, ground, grid;
         // ===== PROCEDURAL MOUNTAIN BUILDER =====
         // ===== PROCEDURAL ANIMAL BUILDER =====
         const ANIMAL_SPECIES = ['deer', 'wolf', 'bear', 'rabbit', 'cow', 'fox'];
+        const DEFAULT_SURVIVAL_ANIMAL_SPEEDS = { deer: 67, bear: 30, wolf: 80, cow: 16, rabbit: 86 };
+        const SURVIVAL_ANIMAL_SPEED_UNIT = 0.0032;
 
         function buildAnimal(group, forcedSpecies) {
             const species = forcedSpecies || ANIMAL_SPECIES[Math.floor(Math.random() * ANIMAL_SPECIES.length)];
@@ -1373,7 +1378,7 @@ let scene, camera, renderer, controls, raycaster, mouse, ground, grid;
             group.userData.bodyColor = bodyColor;
             group.userData.hp = hp;
             group.userData.maxHp = hp;
-            group.userData.speed = speed;
+            group.userData.speed = survivalAnimalSpeed(species) || speed;
             group.userData.legs = legs;
             group.userData.walkPhase = Math.random() * Math.PI * 2;
             group.userData.wanderTarget = null;
@@ -1793,7 +1798,7 @@ let scene, camera, renderer, controls, raycaster, mouse, ground, grid;
             group.userData.fireImmune = true;
         }
 
-        function placeObject(type, pt) {
+        function placeObject(type, pt, options = {}) {
             const group = new THREE.Group();
             group.userData = {
                 type,
@@ -1815,7 +1820,7 @@ let scene, camera, renderer, controls, raycaster, mouse, ground, grid;
             } else if (type === 'skyscraper') {
                 buildSkyscraper(group);
             } else if (type === 'tree') {
-                buildTree(group);
+                buildTree(group, options.species);
             } else if (type === 'streetlamp') {
                 buildStreetLamp(group);
             } else if (type === 'mountain') {
@@ -2323,6 +2328,8 @@ let scene, camera, renderer, controls, raycaster, mouse, ground, grid;
                 spawnKraken(pt);
             } else if (type === 'maw') {
                 spawnGroundMaw(pt);
+            } else if (type === 'sea-eater') {
+                spawnSeaEater(pt);
             } else if (type === 'human-eater') {
                 spawnHumanEater(pt);
             } else if (type === 'titanx') {
@@ -5317,6 +5324,279 @@ let scene, camera, renderer, controls, raycaster, mouse, ground, grid;
             }
         }
 
+        // ===== SEA EATER: ocean-only open-mouth siege creature =====
+        const SEA_EATER_TAIL_REACH = 96;
+        const SEA_EATER_OCEAN_HALF_SIZE = 450;
+        const SEA_EATER_OCEAN_MARGIN = 10;
+        const SEA_EATER_TAIL_LAND_PADDING = 16;
+
+        function isPointInsideOceanPlane(pt, margin = 0) {
+            return Math.abs(pt.x) <= SEA_EATER_OCEAN_HALF_SIZE - margin && Math.abs(pt.z) <= SEA_EATER_OCEAN_HALF_SIZE - margin;
+        }
+
+        function getSeaEaterTailPoint(pt, heading) {
+            const forward = new THREE.Vector3(1, 0, 0).applyAxisAngle(new THREE.Vector3(0, 1, 0), heading);
+            return new THREE.Vector3(pt.x, 0, pt.z).addScaledVector(forward, -SEA_EATER_TAIL_REACH);
+        }
+
+        function isSeaEaterTailInOcean(pt, heading) {
+            const tailPt = getSeaEaterTailPoint(pt, heading);
+            return isPointInsideOceanPlane(tailPt, SEA_EATER_OCEAN_MARGIN) && !pointTouchesIsland(tailPt, SEA_EATER_TAIL_LAND_PADDING);
+        }
+
+        function pickSeaEaterHeading(pt) {
+            const start = Math.random() * Math.PI * 2;
+            const goldenAngle = Math.PI * (3 - Math.sqrt(5));
+            for (let i = 0; i < 40; i++) {
+                const heading = start + i * goldenAngle;
+                if (isSeaEaterTailInOcean(pt, heading)) return heading;
+            }
+            return null;
+        }
+
+        function makeCylinderBetween(a, b, radius, material, radialSegments = 8) {
+            const mid = new THREE.Vector3().addVectors(a, b).multiplyScalar(0.5);
+            const dir = new THREE.Vector3().subVectors(b, a);
+            const mesh = new THREE.Mesh(new THREE.CylinderGeometry(radius, radius, dir.length(), radialSegments), material);
+            mesh.position.copy(mid);
+            mesh.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), dir.normalize());
+            mesh.castShadow = true;
+            mesh.receiveShadow = true;
+            return mesh;
+        }
+
+        function createSeaEaterMesh() {
+            const group = new THREE.Group();
+            const root = new THREE.Group();
+            group.add(root);
+
+            const skinMat = new THREE.MeshStandardMaterial({ color: 0x151719, roughness: 0.96, metalness: 0.02, emissive: 0x030405, emissiveIntensity: 0.16 });
+            const skinDarkMat = new THREE.MeshStandardMaterial({ color: 0x07080a, roughness: 1.0, metalness: 0.0 });
+            const mouthMat = new THREE.MeshBasicMaterial({ color: 0x000000, transparent: true, opacity: 0.98 });
+            const toothMat = new THREE.MeshStandardMaterial({ color: 0xd8d1c2, roughness: 0.55, metalness: 0.06 });
+            const wakeMat = new THREE.MeshBasicMaterial({ color: 0x93c5fd, transparent: true, opacity: 0.28, side: THREE.DoubleSide, depthWrite: false });
+
+            const body = new THREE.Mesh(new THREE.SphereGeometry(35, 32, 16), skinMat);
+            body.scale.set(1.95, 0.58, 0.56);
+            body.position.set(-12, 18, 0);
+            body.castShadow = true;
+            body.receiveShadow = true;
+            root.add(body);
+
+            for (let i = 0; i < 70; i++) {
+                const bump = new THREE.Mesh(new THREE.SphereGeometry(0.7 + Math.random() * 1.4, 5, 4), skinDarkMat);
+                const a = Math.random() * Math.PI * 2;
+                const y = -0.42 + Math.random() * 0.9;
+                const r = Math.sqrt(Math.max(0.08, 1 - y * y));
+                bump.position.set(-12 + Math.cos(a) * r * 58, 18 + y * 18, Math.sin(a) * r * 18);
+                bump.castShadow = true;
+                root.add(bump);
+            }
+
+            const mouthRing = new THREE.Mesh(new THREE.TorusGeometry(20, 3.8, 16, 96), skinMat);
+            mouthRing.rotation.y = Math.PI / 2;
+            mouthRing.position.set(39, 21, 0);
+            mouthRing.scale.set(0.82, 1.14, 0.68);
+            mouthRing.castShadow = true;
+            root.add(mouthRing);
+
+            const throat = new THREE.Mesh(new THREE.CircleGeometry(19, 64), mouthMat);
+            throat.rotation.y = Math.PI / 2;
+            throat.position.set(41.2, 21, 0);
+            throat.scale.set(0.82, 1.14, 0.68);
+            root.add(throat);
+
+            const teeth = [];
+            [17, 12, 7].forEach((radius, ringIndex) => {
+                const count = ringIndex === 0 ? 34 : ringIndex === 1 ? 26 : 18;
+                for (let i = 0; i < count; i++) {
+                    const angle = (i / count) * Math.PI * 2 + ringIndex * 0.07;
+                    const len = 4.8 + ringIndex * 1.5 + Math.random() * 2.0;
+                    const tooth = new THREE.Mesh(new THREE.ConeGeometry(0.7, len, 6), toothMat);
+                    tooth.position.set(41 - ringIndex * 3.1, 21 + Math.cos(angle) * radius * 1.14, Math.sin(angle) * radius * 0.68);
+                    const inward = new THREE.Vector3(-1.0, -Math.cos(angle) * 0.45, -Math.sin(angle) * 0.45).normalize();
+                    tooth.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), inward);
+                    tooth.castShadow = true;
+                    root.add(tooth);
+                    teeth.push(tooth);
+                }
+            });
+
+            const legs = [];
+            const legAnchors = [
+                { base: new THREE.Vector3(22, 13, -11), crest: new THREE.Vector3(50, 43, -14), tip: new THREE.Vector3(82, 0.6, -17) },
+                { base: new THREE.Vector3(22, 13, 11), crest: new THREE.Vector3(50, 43, 14), tip: new THREE.Vector3(82, 0.6, 17) }
+            ];
+            legAnchors.forEach(({ base, crest, tip }) => {
+                const curve = new THREE.CatmullRomCurve3([base, crest, tip]);
+                const limb = new THREE.Mesh(new THREE.TubeGeometry(curve, 24, 2.05, 8, false), skinMat);
+                limb.castShadow = true;
+                limb.receiveShadow = true;
+                const foot = new THREE.Mesh(new THREE.SphereGeometry(4.8, 10, 6), skinMat);
+                foot.scale.set(1.65, 0.22, 0.86);
+                foot.position.copy(tip);
+                foot.castShadow = true;
+                foot.receiveShadow = true;
+                root.add(limb, foot);
+                legs.push({ limb, foot });
+            });
+
+            const tailStem = makeCylinderBetween(new THREE.Vector3(-72, 16, 0), new THREE.Vector3(-112, 9, 0), 3.1, skinMat, 10);
+            root.add(tailStem);
+            const tailTop = new THREE.Mesh(new THREE.ConeGeometry(8, 28, 3), skinMat);
+            tailTop.position.set(-125, 13, 0);
+            tailTop.rotation.z = -Math.PI / 2;
+            tailTop.scale.set(0.45, 1.0, 0.24);
+            tailTop.castShadow = true;
+            root.add(tailTop);
+            const tailBottom = tailTop.clone();
+            tailBottom.position.y = 5;
+            tailBottom.rotation.z = Math.PI / 2;
+            root.add(tailBottom);
+
+            const waterline = new THREE.Mesh(
+                new THREE.RingGeometry(26, 88, 96, 1),
+                new THREE.MeshBasicMaterial({ color: 0xbdefff, transparent: true, opacity: 0.22, side: THREE.DoubleSide, depthWrite: false })
+            );
+            waterline.rotation.x = -Math.PI / 2;
+            waterline.position.set(-12, 0.35, 0);
+            waterline.scale.set(1.35, 0.34, 1);
+            root.add(waterline);
+
+            const suctionRings = [];
+            for (let i = 0; i < 6; i++) {
+                const ring = new THREE.Mesh(new THREE.TorusGeometry(27 + i * 11, 0.65, 8, 72), wakeMat.clone());
+                ring.rotation.y = Math.PI / 2;
+                ring.position.set(50 + i * 8, 21, 0);
+                root.add(ring);
+                suctionRings.push(ring);
+            }
+
+            return { group, root, body, mouthRing, throat, teeth, legs, suctionRings, waterline };
+        }
+
+        function spawnSeaEater(pt) {
+            if (!canPlaceOnWater(pt, 'sea-eater')) return;
+            if (seaEaters.length > 0) {
+                showMessage('The Sea Eater is already feeding');
+                return;
+            }
+
+            const heading = pickSeaEaterHeading(pt);
+            if (heading === null) {
+                showMessage('The Sea Eater needs room for its tail in open water');
+                return;
+            }
+
+            const mesh = createSeaEaterMesh();
+            scene.add(mesh.group);
+            const headPos = new THREE.Vector3(pt.x, 0, pt.z);
+            seaEaters.push({
+                ...mesh,
+                pt: pt.clone(),
+                headPos,
+                heading,
+                age: 0,
+                lifeMax: 1200,
+                grabbedObjects: new Set()
+            });
+
+            showMessage('The Sea Eater rises with its mouth open for 20 seconds');
+        }
+
+        function despawnSeaEater(eater) {
+            if (!eater) return;
+            if (eater.grabbedObjects) eater.grabbedObjects.forEach(obj => { if (obj.userData) obj.userData.beingGrabbed = false; });
+            scene.remove(eater.group);
+            disposeObjectTree(eater.group);
+        }
+
+        function despawnAllSeaEaters() {
+            seaEaters.forEach(despawnSeaEater);
+            seaEaters = [];
+        }
+
+        function updateSeaEaters() {
+            for (let ei = seaEaters.length - 1; ei >= 0; ei--) {
+                const eater = seaEaters[ei];
+                eater.age++;
+                if (eater.age >= eater.lifeMax) {
+                    despawnSeaEater(eater);
+                    seaEaters.splice(ei, 1);
+                    continue;
+                }
+
+                const emerge = Math.min(1, eater.age / 70);
+                const dive = Math.max(0, (eater.age - 1110) / 90);
+                const bob = Math.sin(eater.age * 0.035) * 1.4;
+                const y = -46 + emerge * 34 - dive * 54 + bob;
+                eater.heading += Math.sin(eater.age * 0.011) * 0.0018;
+                eater.root.position.set(eater.pt.x + Math.sin(eater.age * 0.016) * 4, y, eater.pt.z + Math.cos(eater.age * 0.014) * 4);
+                eater.root.rotation.y = eater.heading;
+                eater.root.rotation.z = Math.sin(eater.age * 0.025) * 0.035;
+                eater.headPos.set(eater.root.position.x, y + 21, eater.root.position.z);
+                eater.root.updateMatrixWorld(true);
+
+                eater.legs.forEach((leg, i) => {
+                    const phase = eater.age * 0.045 + i * Math.PI * 0.85;
+                    leg.foot.position.y = 0.8 + Math.max(0, Math.sin(phase)) * 1.7 - dive * 18;
+                    leg.foot.rotation.y = Math.sin(phase) * 0.08;
+                    leg.limb.rotation.z = Math.sin(phase) * 0.035;
+                });
+                eater.body.scale.y = 0.58 + Math.sin(eater.age * 0.04) * 0.018;
+                eater.mouthRing.scale.set(0.82 + Math.sin(eater.age * 0.055) * 0.02, 1.14, 0.68);
+                if (eater.waterline) {
+                    eater.waterline.position.y = 0.35 - y + Math.sin(eater.age * 0.05) * 0.08;
+                    eater.waterline.material.opacity = dive > 0 ? Math.max(0, 0.22 * (1 - dive)) : 0.22;
+                }
+                eater.teeth.forEach((tooth, i) => {
+                    tooth.scale.y = 1 + Math.sin(eater.age * 0.12 + i) * 0.05;
+                });
+                eater.suctionRings.forEach((ring, i) => {
+                    ring.position.x = 48 + i * 10 - ((eater.age * 1.9) % 10);
+                    ring.scale.setScalar(0.86 + ((eater.age * 0.02 + i * 0.18) % 0.75));
+                    ring.material.opacity = dive > 0 ? Math.max(0, 0.24 * (1 - dive)) : Math.max(0.05, 0.3 - i * 0.035);
+                });
+
+                if (eater.grabbedObjects) {
+                    eater.grabbedObjects.forEach(obj => { if (obj.userData) obj.userData.beingGrabbed = false; });
+                    eater.grabbedObjects.clear();
+                }
+
+                const mouthPos = new THREE.Vector3(42, 21, 0).applyMatrix4(eater.root.matrixWorld);
+                const forward = new THREE.Vector3(1, 0, 0).applyQuaternion(eater.root.quaternion).normalize();
+                if (dive < 0.75) {
+                    worldObjects.slice().forEach(obj => {
+                        if (!obj.userData || obj.userData.hp <= 0 || obj.userData.frozen || obj.userData.type === 'road') return;
+                        const toObj = new THREE.Vector3().subVectors(obj.position, mouthPos);
+                        const d = toObj.length();
+                        if (d > 175) return;
+                        const alignment = d > 0 ? forward.dot(toObj.clone().normalize()) : 1;
+                        if (alignment < -0.25 && d > 45) return;
+                        const toMouth = new THREE.Vector3().subVectors(mouthPos, obj.position).normalize();
+                        const suction = Math.max(0.05, (1 - d / 175) * (alignment > 0 ? 0.9 : 0.45));
+                        obj.position.addScaledVector(toMouth, suction);
+                        obj.position.y += Math.max(0, (1 - d / 95) * 0.05);
+                        if (obj.userData.velocity) obj.userData.velocity.addScaledVector(toMouth, suction * 0.25);
+                        if (d < 58) {
+                            obj.userData.beingGrabbed = true;
+                            eater.grabbedObjects.add(obj);
+                            obj.userData.hp -= obj.userData.type === 'ship' ? 18 : 28;
+                            if (obj.userData.type === 'ship') {
+                                obj.userData.hullLeaks = Math.max(obj.userData.hullLeaks || 0, 7);
+                                if (!obj.userData.sinking && (obj.userData.hp <= 0 || d < 34)) sinkShip(obj, 'sea-eater');
+                            } else if ((obj.userData.type === 'human' || obj.userData.type === 'builder' || obj.userData.type === 'animal') && d < 32) {
+                                obj.userData.hp = 0;
+                                showMessage('The Sea Eater swallowed prey');
+                            } else if (obj.userData.hp <= 0 && d < 42) {
+                                smashObjectIntoPieces(obj, 2.8);
+                            }
+                        }
+                    });
+                }
+            }
+        }
+
         // ===== HUMAN EATER: a giant flytrap that bends, opens, snaps, and swallows people =====
         function spawnHumanEater(pt) {
             const root = new THREE.Group();
@@ -7155,12 +7435,12 @@ let scene, camera, renderer, controls, raycaster, mouse, ground, grid;
         }
 
         function canPlaceOnWater(pt, type) {
-            const label = type === 'ship' ? 'Ships' : type === 'whirlpool' ? 'Whirlpools' : 'Islands';
+            const label = type === 'ship' ? 'Ships' : type === 'whirlpool' ? 'Whirlpools' : type === 'sea-eater' ? 'The Sea Eater' : 'Islands';
             if (!isOceanActive()) {
                 showMessage(`${label} need open water`);
                 return false;
             }
-            const padding = type === 'ship' ? 8 : type === 'whirlpool' ? 4 : 12;
+            const padding = type === 'ship' ? 8 : type === 'whirlpool' ? 4 : type === 'sea-eater' ? 42 : 12;
             if (pointTouchesIsland(pt, padding)) {
                 showMessage(`${label} cannot be placed on land`);
                 return false;
@@ -9062,6 +9342,7 @@ let scene, camera, renderer, controls, raycaster, mouse, ground, grid;
             updateKrakens();
             updateGroundMaws();
             updateHumanEaters();
+            updateSeaEaters();
             updateTitanXs();
             updateConstruction();
             updateTour();
@@ -10280,6 +10561,19 @@ let scene, camera, renderer, controls, raycaster, mouse, ground, grid;
                 const ud = o.userData;
                 ud.lifeTime = (ud.lifeTime || 0) + 1;
 
+                if (ud.type === 'sapling') {
+                    const growFrames = Math.max(1, (ud.growSeconds || survivalSettings.saplingGrowSeconds) * 60);
+                    const progress = Math.min(1, ud.lifeTime / growFrames);
+                    o.scale.setScalar(0.45 + progress * 0.55);
+                    if (progress >= 1) {
+                        const species = ud.treeSpecies;
+                        const pos = o.position.clone();
+                        removeWorldObject(o);
+                        placeObject('tree', pos, { species });
+                        continue;
+                    }
+                }
+
                 // Skip movement updates for static objects (roads, mountains)
                 // But mountains can still be sucked in by black holes.
                 if (ud.isStatic) {
@@ -10580,6 +10874,10 @@ let scene, camera, renderer, controls, raycaster, mouse, ground, grid;
                         const d = lev.headPos.distanceTo(o.position);
                         if (d < 160 && d < levD) { levD = d; nearestLev = lev; }
                     });
+                    seaEaters.forEach(eater => {
+                        const d = eater.headPos.distanceTo(o.position);
+                        if (d < 190 && d < levD) { levD = d; nearestLev = eater; }
+                    });
 
                     const bigThreat = nearestDevourer || nearestLev;
                     if (bigThreat) {
@@ -10600,14 +10898,15 @@ let scene, camera, renderer, controls, raycaster, mouse, ground, grid;
                     if (ud.task === 'attackDevourer') {
                         const oct = ud.devourerTarget;
                         const isLev = leviathans.includes(oct);
-                        const isDead = isLev ? false : (oct.hp <= 0);
+                        const isSeaEater = seaEaters.includes(oct);
+                        const isDead = (isLev || isSeaEater) ? false : (oct.hp <= 0);
                         if (!oct || isDead) {
                             ud.task = 'idle';
                             ud.devourerTarget = null;
                         } else {
-                            const tx = isLev ? oct.headPos.x : oct.pt.x;
-                            const tz = isLev ? oct.headPos.z : oct.pt.z;
-                            const targetY = isLev ? oct.headPos.y : 120;
+                            const tx = (isLev || isSeaEater) ? oct.headPos.x : oct.pt.x;
+                            const tz = (isLev || isSeaEater) ? oct.headPos.z : oct.pt.z;
+                            const targetY = (isLev || isSeaEater) ? oct.headPos.y : 120;
                             const cx = tx, cz = tz;
                             const dx = cx - o.position.x;
                             const dz = cz - o.position.z;
@@ -10829,6 +11128,7 @@ let scene, camera, renderer, controls, raycaster, mouse, ground, grid;
 
                 // --- ANIMAL AI: wander randomly, simple gait animation ---
                 if (ud.type === 'animal' && ud.hp > 0 && !ud.isCorpse && !ud.onFire) {
+                    ud.speed = survivalAnimalSpeed(ud.species) || ud.speed;
                     ud.wanderTimer = (ud.wanderTimer || 0) + 1;
                     ud.idleTimer = (ud.idleTimer || 0);
 
@@ -11536,7 +11836,7 @@ let scene, camera, renderer, controls, raycaster, mouse, ground, grid;
 
         function setupUI() {
             const buildIds = ['house', 'skyscraper', 'tree', 'streetlamp', 'human', 'builder', 'invader', 'animal', 'river', 'island', 'ship', 'mountain', 'eraser'];
-            const destroyIds = ['fire', 'vortex', 'tornado', 'whirlpool', 'quake', 'tsunami', 'volcano', 'lavaflood', 'napalm', 'cluster', 'nuke', 'blackhole', 'meteor', 'cracker', 'battleship', 'mothership', 'leviathan', 'kraken', 'maw', 'human-eater', 'titanx'];
+            const destroyIds = ['fire', 'vortex', 'tornado', 'whirlpool', 'quake', 'tsunami', 'volcano', 'lavaflood', 'napalm', 'cluster', 'nuke', 'blackhole', 'meteor', 'cracker', 'battleship', 'mothership', 'leviathan', 'kraken', 'maw', 'sea-eater', 'human-eater', 'titanx'];
             const ids = [...buildIds, ...destroyIds];
 
             const selectTool = (id, el) => {
@@ -11565,6 +11865,7 @@ let scene, camera, renderer, controls, raycaster, mouse, ground, grid;
                 if (id === 'invader') hint = ' · charges your village';
                 if (id === 'animal') hint = ' · random species, wanders';
                 if (id === 'maw') hint = ' · 20 second feeding attack';
+                if (id === 'sea-eater') hint = ' · ocean-only open-mouth eater, dives after 20 seconds';
                 if (id === 'human-eater') hint = ' · bends forward and snaps up people';
                 if (id === 'titanx') hint = ' · airborne Tiamat serpent with seeking pink fronds';
                 showMessage('Selected: ' + label + hint);
@@ -11737,6 +12038,7 @@ let scene, camera, renderer, controls, raycaster, mouse, ground, grid;
                 krakens = [];
                 despawnAllGroundMaws();
                 despawnAllHumanEaters();
+                despawnAllSeaEaters();
                 despawnAllTitanXs();
                 despawnAllTornadoes();
                 despawnAllLightningVortices();
@@ -11853,6 +12155,7 @@ let scene, camera, renderer, controls, raycaster, mouse, ground, grid;
             krakens = [];
             despawnAllGroundMaws();
             despawnAllHumanEaters();
+            despawnAllSeaEaters();
             despawnAllTitanXs();
             octopuses = [];
             removeMonarch();
@@ -13572,42 +13875,30 @@ let scene, camera, renderer, controls, raycaster, mouse, ground, grid;
                 toolbar.style.display = 'none';
                 modeScreen.classList.remove('hidden');
             };
+            setupSurvivalSettingsControls();
 
             // Touch movement buttons fire pseudo-key events
             survivalControls.querySelectorAll('.move-btn').forEach(btn => {
                 const key = btn.getAttribute('data-key');
                 btn.addEventListener('pointerdown', e => {
                     e.preventDefault();
+                    try { btn.setPointerCapture(e.pointerId); } catch(_) {}
                     survivalKeys[key] = true;
                     if (key === 'Digit1' && !survivalPunchPressed) {
                         survivalPunchPressed = true;
                         survivalPunch();
                     }
+                    if (key === 'KeyE') tryUseSelectedSurvivalItem();
                 });
                 btn.addEventListener('pointerup', e => {
                     e.preventDefault();
-                    survivalKeys[key] = false;
-                    if (key === 'Digit1') survivalPunchPressed = false;
-                    if (key === 'KeyE') {
-                        survivalChopProgress = 0;
-                        survivalChopTarget = null;
-                    }
+                    releaseSurvivalControlKey(key);
                 });
                 btn.addEventListener('pointercancel', e => {
-                    survivalKeys[key] = false;
-                    if (key === 'Digit1') survivalPunchPressed = false;
-                    if (key === 'KeyE') {
-                        survivalChopProgress = 0;
-                        survivalChopTarget = null;
-                    }
+                    releaseSurvivalControlKey(key);
                 });
                 btn.addEventListener('pointerleave', e => {
-                    survivalKeys[key] = false;
-                    if (key === 'Digit1') survivalPunchPressed = false;
-                    if (key === 'KeyE') {
-                        survivalChopProgress = 0;
-                        survivalChopTarget = null;
-                    }
+                    if (!btn.matches(':active')) releaseSurvivalControlKey(key);
                 });
             });
 
@@ -13627,12 +13918,29 @@ let scene, camera, renderer, controls, raycaster, mouse, ground, grid;
 
         // ===== SURVIVAL MODE =====
         let survivalKeys = {};
+        let survivalMovementInput = 'wasd';
         let grassPatches = [];
         const SURVIVAL_INVENTORY_SIZE = 9;
+        const SAPLING_DROP_CHANCE = 0.35;
+        const SAPLING_SPECIES = TREE_SPECIES.filter(species => species !== 'dead');
+        const TREE_DISPLAY_NAMES = {
+            pine: 'Pine',
+            oak: 'Oak',
+            birch: 'Birch',
+            maple: 'Maple',
+            willow: 'Willow',
+            cypress: 'Cypress',
+            cherry: 'Cherry',
+            dead: 'Dead'
+        };
         const SURVIVAL_ITEM_DEFS = {
             wood: { icon: '🪵', name: 'Wood', maxStack: 64 },
             apple: { icon: '🍎', name: 'Apple', maxStack: 64, food: true, heal: 32 },
-            meat: { icon: '🥩', name: 'Meat', maxStack: 64, food: true, heal: 50 }
+            meat: { icon: '🥩', name: 'Meat', maxStack: 64, food: true, heal: 50 },
+            ...Object.fromEntries(SAPLING_SPECIES.map(species => [
+                `${species}-sapling`,
+                { icon: '🌱', name: `${TREE_DISPLAY_NAMES[species]} Sapling`, maxStack: 64, sapling: true, species }
+            ]))
         };
         let survivalInventory = Array.from({ length: SURVIVAL_INVENTORY_SIZE }, () => null);
         let survivalSelectedSlot = 0;
@@ -13646,6 +13954,23 @@ let scene, camera, renderer, controls, raycaster, mouse, ground, grid;
             impossible: { label: 'Impossible', minDelayMs: 2000, maxDelayMs: 5000, minDamage: 20, maxDamage: 100 },
             peaceful: { label: 'Peaceful', minDelayMs: Infinity, maxDelayMs: Infinity, minDamage: 0, maxDamage: 0 }
         };
+        const survivalSettings = {
+            animalSpeeds: { ...DEFAULT_SURVIVAL_ANIMAL_SPEEDS },
+            appleRarity: 21,
+            saplingGrowSeconds: 120
+        };
+
+        function clampNumber(value, min, max, fallback) {
+            const num = Number(value);
+            if (!Number.isFinite(num)) return fallback;
+            return Math.max(min, Math.min(max, num));
+        }
+
+        function survivalAnimalSpeed(species) {
+            const setting = survivalSettings.animalSpeeds[species];
+            if (!Number.isFinite(setting)) return null;
+            return Math.max(0, setting) * SURVIVAL_ANIMAL_SPEED_UNIT;
+        }
 
         function survivalIsPeaceful() {
             return survivalVariant === 'peaceful';
@@ -13764,6 +14089,125 @@ let scene, camera, renderer, controls, raycaster, mouse, ground, grid;
         // Player avatar group (third-person)
         let survivalPlayer = null;
 
+        function survivalInputLabel(mode) {
+            return mode === 'arrows' ? 'Arrow Keys' : 'W A S D';
+        }
+
+        function mapSurvivalControlKey(key) {
+            const k = key.toLowerCase();
+            if (k === ' ') return 'Space';
+
+            const movementUsesArrows = survivalMovementInput === 'arrows';
+            if (k === 'arrowup') return movementUsesArrows ? 'KeyW' : 'ArrowUp';
+            if (k === 'arrowdown') return movementUsesArrows ? 'KeyS' : 'ArrowDown';
+            if (k === 'arrowleft') return movementUsesArrows ? 'KeyA' : 'ArrowLeft';
+            if (k === 'arrowright') return movementUsesArrows ? 'KeyD' : 'ArrowRight';
+            if (k === 'w') return movementUsesArrows ? 'ArrowUp' : 'KeyW';
+            if (k === 'a') return movementUsesArrows ? 'ArrowLeft' : 'KeyA';
+            if (k === 's') return movementUsesArrows ? 'ArrowDown' : 'KeyS';
+            if (k === 'd') return movementUsesArrows ? 'ArrowRight' : 'KeyD';
+            return null;
+        }
+
+        function updateSurvivalSettingsUi() {
+            const lookMode = survivalMovementInput === 'arrows' ? 'wasd' : 'arrows';
+            document.querySelectorAll('[data-survival-movement]').forEach(btn => {
+                const selected = btn.getAttribute('data-survival-movement') === survivalMovementInput;
+                btn.classList.toggle('selected', selected);
+                btn.setAttribute('aria-pressed', selected ? 'true' : 'false');
+            });
+            const lookSetting = document.getElementById('survival-look-setting');
+            if (lookSetting) lookSetting.textContent = survivalInputLabel(lookMode);
+            Object.entries(survivalSettings.animalSpeeds).forEach(([species, value]) => {
+                const input = document.querySelector(`[data-survival-animal-speed="${species}"]`);
+                const label = document.getElementById(`survival-animal-speed-${species}-value`);
+                if (input) input.value = value;
+                if (label) label.textContent = `${value}/100`;
+            });
+            const appleInput = document.querySelector('[data-survival-setting="appleRarity"]');
+            const appleLabel = document.getElementById('survival-apple-rarity-value');
+            if (appleInput) appleInput.value = survivalSettings.appleRarity;
+            if (appleLabel) appleLabel.textContent = `${survivalSettings.appleRarity}%`;
+            const growthInput = document.querySelector('[data-survival-setting="saplingGrowSeconds"]');
+            const growthLabel = document.getElementById('survival-sapling-growth-value');
+            if (growthInput) growthInput.value = survivalSettings.saplingGrowSeconds;
+            if (growthLabel) growthLabel.textContent = `${survivalSettings.saplingGrowSeconds} sec.`;
+        }
+
+        function setSurvivalMovementInput(mode) {
+            survivalMovementInput = mode === 'arrows' ? 'arrows' : 'wasd';
+            survivalKeys['KeyW'] = false;
+            survivalKeys['KeyA'] = false;
+            survivalKeys['KeyS'] = false;
+            survivalKeys['KeyD'] = false;
+            survivalKeys['ArrowUp'] = false;
+            survivalKeys['ArrowDown'] = false;
+            survivalKeys['ArrowLeft'] = false;
+            survivalKeys['ArrowRight'] = false;
+            updateSurvivalSettingsUi();
+            showSurvivalToast(`Movement: ${survivalInputLabel(survivalMovementInput)}`);
+        }
+
+        function releaseSurvivalControlKey(key) {
+            survivalKeys[key] = false;
+            if (key === 'Digit1') survivalPunchPressed = false;
+            if (key === 'KeyE') {
+                survivalChopProgress = 0;
+                survivalChopTarget = null;
+            }
+        }
+
+        function releaseAllSurvivalControls() {
+            survivalKeys = {};
+            survivalPunchPressed = false;
+            survivalChopProgress = 0;
+            survivalChopTarget = null;
+            survivalDragging = false;
+        }
+
+        function setupSurvivalSettingsControls() {
+            const btn = document.getElementById('survival-settings-btn');
+            const panel = document.getElementById('survival-settings-panel');
+            if (!btn || !panel) return;
+            btn.onclick = () => {
+                const isOpen = panel.classList.toggle('hidden') === false;
+                btn.setAttribute('aria-expanded', isOpen ? 'true' : 'false');
+            };
+            panel.querySelectorAll('[data-survival-movement]').forEach(option => {
+                option.onclick = e => {
+                    e.preventDefault();
+                    setSurvivalMovementInput(option.getAttribute('data-survival-movement'));
+                };
+            });
+            panel.querySelectorAll('[data-survival-animal-speed]').forEach(input => {
+                input.oninput = e => {
+                    const species = input.getAttribute('data-survival-animal-speed');
+                    const value = Math.round(clampNumber(input.value, 0, 100, DEFAULT_SURVIVAL_ANIMAL_SPEEDS[species] || 50));
+                    survivalSettings.animalSpeeds[species] = value;
+                    worldObjects.forEach(obj => {
+                        if (obj.userData.type === 'animal' && obj.userData.species === species) {
+                            obj.userData.speed = survivalAnimalSpeed(species);
+                        }
+                    });
+                    updateSurvivalSettingsUi();
+                    e.stopPropagation();
+                };
+            });
+            panel.querySelectorAll('[data-survival-setting]').forEach(input => {
+                input.oninput = e => {
+                    const setting = input.getAttribute('data-survival-setting');
+                    if (setting === 'appleRarity') {
+                        survivalSettings.appleRarity = Math.round(clampNumber(input.value, 0, 100, 21));
+                    } else if (setting === 'saplingGrowSeconds') {
+                        survivalSettings.saplingGrowSeconds = Math.round(clampNumber(input.value, 5, 300, 120));
+                    }
+                    updateSurvivalSettingsUi();
+                    e.stopPropagation();
+                };
+            });
+            updateSurvivalSettingsUi();
+        }
+
         function survivalCooldownKey(label) {
             return String(label || 'damage').replace(/\s+/g, '-').toLowerCase();
         }
@@ -13871,6 +14315,86 @@ let scene, camera, renderer, controls, raycaster, mouse, ground, grid;
 
         function selectedSurvivalItem() {
             return survivalInventory[survivalSelectedSlot] || null;
+        }
+
+        function selectedSurvivalItemDef() {
+            const slot = selectedSurvivalItem();
+            return slot ? SURVIVAL_ITEM_DEFS[slot.id] : null;
+        }
+
+        function survivalPlacementPointInFront(distance = 5) {
+            if (!survivalPlayer) return null;
+            const forward = new THREE.Vector3(Math.sin(survivalYaw), 0, Math.cos(survivalYaw));
+            const pt = new THREE.Vector3(
+                survivalPlayer.position.x + forward.x * distance,
+                0,
+                survivalPlayer.position.z + forward.z * distance
+            );
+            const dfo = Math.sqrt(pt.x * pt.x + pt.z * pt.z);
+            if (dfo > WORLD_SIZE - 6) pt.multiplyScalar((WORLD_SIZE - 6) / dfo);
+            return pt;
+        }
+
+        function createPlantedSapling(species, pt) {
+            const group = new THREE.Group();
+            const trunkMat = new THREE.MeshStandardMaterial({ color: 0x6b4423, roughness: 0.9 });
+            const leafColor = species === 'cherry' ? 0xf9a8d4 : species === 'maple' ? 0xf59e0b : 0x16a34a;
+            const leafMat = new THREE.MeshStandardMaterial({ color: leafColor, roughness: 0.9 });
+            const trunk = new THREE.Mesh(new THREE.CylinderGeometry(0.08, 0.12, 1.1, 6), trunkMat);
+            trunk.position.y = 0.55;
+            trunk.castShadow = true;
+            group.add(trunk);
+            const leaves = new THREE.Mesh(new THREE.SphereGeometry(0.42, 8, 6), leafMat);
+            leaves.position.y = 1.2;
+            leaves.castShadow = true;
+            group.add(leaves);
+            group.position.copy(pt);
+            group.position.y = 0;
+            group.scale.setScalar(0.45);
+            group.userData = {
+                type: 'sapling',
+                treeSpecies: species,
+                velocity: new THREE.Vector3(),
+                hp: 20,
+                maxHp: 20,
+                onFire: false,
+                burnLevel: 0,
+                isStatic: true,
+                lifeTime: 0,
+                growSeconds: survivalSettings.saplingGrowSeconds
+            };
+            scene.add(group);
+            addWorldObject(group);
+            return group;
+        }
+
+        function tryPlaceSelectedSapling(pt = null) {
+            if (!survivalActive || !survivalPlayer) return false;
+            const slot = selectedSurvivalItem();
+            const def = selectedSurvivalItemDef();
+            if (!slot || !def || !def.sapling) return false;
+            const placePt = pt || survivalPlacementPointInFront();
+            if (!placePt) return false;
+            if (survivalPlayer.position.distanceTo(placePt) > 8.5) {
+                showSurvivalToast('Too far away');
+                return true;
+            }
+            createPlantedSapling(def.species, placePt);
+            removeSurvivalItemFromSlot(survivalSelectedSlot, 1);
+            showSurvivalToast(`Planted ${def.name}`);
+            return true;
+        }
+
+        function tryUseSelectedSurvivalItem() {
+            if (findSurvivalLookTree()) return false;
+            const def = selectedSurvivalItemDef();
+            if (!def) return false;
+            if (def.sapling) return tryPlaceSelectedSapling();
+            if (def.food) {
+                eatSelectedSurvivalFood();
+                return true;
+            }
+            return false;
         }
 
         function createSurvivalMeatDrop(pos, amount = 1) {
@@ -14021,12 +14545,24 @@ let scene, camera, renderer, controls, raycaster, mouse, ground, grid;
             while (foodGroup.children.length > 0) foodGroup.remove(foodGroup.children[0]);
             const slot = selectedSurvivalItem();
             const def = slot ? SURVIVAL_ITEM_DEFS[slot.id] : null;
-            if (!def || !def.food) {
+            if (!def || (!def.food && !def.sapling)) {
                 foodGroup.visible = false;
                 return;
             }
 
-            if (slot.id === 'meat') {
+            if (def.sapling) {
+                const stem = new THREE.Mesh(new THREE.CylinderGeometry(0.012, 0.018, 0.32, 5), new THREE.MeshBasicMaterial({ color: 0x78350f }));
+                stem.position.y = 0.02;
+                foodGroup.add(stem);
+                const leafMat = new THREE.MeshBasicMaterial({ color: def.species === 'cherry' ? 0xf9a8d4 : 0x22c55e });
+                const leafA = new THREE.Mesh(new THREE.SphereGeometry(0.09, 7, 5), leafMat);
+                leafA.position.set(-0.06, 0.18, 0);
+                leafA.scale.set(1.25, 0.65, 0.9);
+                foodGroup.add(leafA);
+                const leafB = leafA.clone();
+                leafB.position.x = 0.06;
+                foodGroup.add(leafB);
+            } else if (slot.id === 'meat') {
                 const meatMat = new THREE.MeshBasicMaterial({ color: 0xb91c1c });
                 const fatMat = new THREE.MeshBasicMaterial({ color: 0xffedd5 });
                 const meat = new THREE.Mesh(new THREE.BoxGeometry(0.22, 0.13, 0.28), meatMat);
@@ -14217,6 +14753,8 @@ let scene, camera, renderer, controls, raycaster, mouse, ground, grid;
             // Input listeners
             window.addEventListener('keydown', survivalKeyDown);
             window.addEventListener('keyup', survivalKeyUp);
+            window.addEventListener('blur', releaseAllSurvivalControls);
+            document.addEventListener('visibilitychange', survivalVisibilityChanged);
             renderer.domElement.addEventListener('pointerdown', survivalPointerDown);
             renderer.domElement.addEventListener('contextmenu', survivalContextMenu);
             window.addEventListener('pointermove', survivalPointerMove);
@@ -14242,13 +14780,15 @@ let scene, camera, renderer, controls, raycaster, mouse, ground, grid;
             survivalActive = false;
             window.removeEventListener('keydown', survivalKeyDown);
             window.removeEventListener('keyup', survivalKeyUp);
+            window.removeEventListener('blur', releaseAllSurvivalControls);
+            document.removeEventListener('visibilitychange', survivalVisibilityChanged);
             if (renderer && renderer.domElement) {
                 renderer.domElement.removeEventListener('pointerdown', survivalPointerDown);
                 renderer.domElement.removeEventListener('contextmenu', survivalContextMenu);
             }
             window.removeEventListener('pointermove', survivalPointerMove);
             window.removeEventListener('pointerup', survivalPointerUp);
-            survivalKeys = {};
+            releaseAllSurvivalControls();
             survivalDragging = false;
             survivalHazards = [];
             survivalDroppedItems.forEach(drop => scene.remove(drop.mesh));
@@ -14357,6 +14897,10 @@ let scene, camera, renderer, controls, raycaster, mouse, ground, grid;
                 eatSelectedSurvivalFood();
                 return;
             }
+            if (e.button === 0 && tryPlaceSelectedSapling(screenToGround(e))) {
+                e.preventDefault();
+                return;
+            }
             survivalDragging = true;
             survivalLastPointer.x = e.clientX;
             survivalLastPointer.y = e.clientY;
@@ -14389,18 +14933,13 @@ let scene, camera, renderer, controls, raycaster, mouse, ground, grid;
             survivalDragging = false;
         }
 
+        function survivalVisibilityChanged() {
+            if (document.hidden) releaseAllSurvivalControls();
+        }
+
         function survivalKeyDown(e) {
             const k = e.key.toLowerCase();
-            let mapped = null;
-            if (k === 'arrowup')    mapped = 'ArrowUp';
-            else if (k === 'arrowdown')  mapped = 'ArrowDown';
-            else if (k === 'arrowleft')  mapped = 'ArrowLeft';
-            else if (k === 'arrowright') mapped = 'ArrowRight';
-            else if (k === 'w') mapped = 'KeyW';
-            else if (k === 'a') mapped = 'KeyA';
-            else if (k === 's') mapped = 'KeyS';
-            else if (k === 'd') mapped = 'KeyD';
-            else if (k === ' ') mapped = 'Space';
+            const mapped = mapSurvivalControlKey(e.key);
             if (mapped) {
                 survivalKeys[mapped] = true;
                 e.preventDefault();
@@ -14417,6 +14956,7 @@ let scene, camera, renderer, controls, raycaster, mouse, ground, grid;
             }
             if (k === 'e') {
                 survivalKeys['KeyE'] = true;
+                if (!e.repeat) tryUseSelectedSurvivalItem();
                 e.preventDefault();
                 return;
             }
@@ -14427,16 +14967,7 @@ let scene, camera, renderer, controls, raycaster, mouse, ground, grid;
         }
         function survivalKeyUp(e) {
             const k = e.key.toLowerCase();
-            let mapped = null;
-            if (k === 'arrowup')    mapped = 'ArrowUp';
-            else if (k === 'arrowdown')  mapped = 'ArrowDown';
-            else if (k === 'arrowleft')  mapped = 'ArrowLeft';
-            else if (k === 'arrowright') mapped = 'ArrowRight';
-            else if (k === 'w') mapped = 'KeyW';
-            else if (k === 'a') mapped = 'KeyA';
-            else if (k === 's') mapped = 'KeyS';
-            else if (k === 'd') mapped = 'KeyD';
-            else if (k === ' ') mapped = 'Space';
+            const mapped = mapSurvivalControlKey(e.key);
             if (mapped) {
                 survivalKeys[mapped] = false;
                 return;
@@ -14802,6 +15333,21 @@ let scene, camera, renderer, controls, raycaster, mouse, ground, grid;
                 }
             });
 
+            seaEaters.forEach((eater, idx) => {
+                eater.root.updateMatrixWorld(true);
+                const mouth3d = new THREE.Vector3(42, 21, 0).applyMatrix4(eater.root.matrixWorld);
+                const mouth = new THREE.Vector3(mouth3d.x, 0, mouth3d.z);
+                const d = playerPos.distanceTo(mouth);
+                if (d < 150) {
+                    const closeness = 1 - Math.min(1, d / 150);
+                    survivalPlayer.position.addScaledVector(new THREE.Vector3().subVectors(mouth, playerPos).normalize(), 0.18 + closeness * 0.35);
+                    applySurvivalDamage(Math.round(12 + closeness * 42), 'Sea Eater suction', 800, `sea-eater-suction:${idx}`);
+                }
+                if (d < 24) {
+                    applySurvivalLethalDamage('Sea Eater swallow', `sea-eater-swallow:${idx}`);
+                }
+            });
+
             titanXs.forEach((titan, idx) => {
                 if (titan.phase !== 'attack') return;
                 const dCore = playerPos.distanceTo(titan.pt);
@@ -14913,16 +15459,10 @@ let scene, camera, renderer, controls, raycaster, mouse, ground, grid;
             showSurvivalToast('Maw grabbed you: punch 3x');
         }
 
-        // Find what the player is looking at within 6 units in front
-        function survivalUpdateInteraction() {
-            if (!survivalPlayer) return;
-            const prompt = document.getElementById('survival-prompt');
-            // Forward vector
+        function findSurvivalLookTree(reach = 6) {
+            if (!survivalPlayer) return null;
             const forward = new THREE.Vector3(Math.sin(survivalYaw), 0, Math.cos(survivalYaw));
             const playerPos = new THREE.Vector3(survivalPlayer.position.x, 0, survivalPlayer.position.z);
-            const reach = 6;
-
-            // Find nearest standing tree along forward ray within reach
             let bestTree = null, bestT = Infinity;
             worldObjects.forEach(other => {
                 if (other.userData.type !== 'tree') return;
@@ -14940,7 +15480,16 @@ let scene, camera, renderer, controls, raycaster, mouse, ground, grid;
                 if (lateral > 1.6) return;
                 if (along < bestT) { bestT = along; bestTree = other; }
             });
+            return bestTree;
+        }
 
+        // Find what the player is looking at within 6 units in front
+        function survivalUpdateInteraction() {
+            if (!survivalPlayer) return;
+            const prompt = document.getElementById('survival-prompt');
+            const reach = 6;
+            const playerPos = new THREE.Vector3(survivalPlayer.position.x, 0, survivalPlayer.position.z);
+            const bestTree = findSurvivalLookTree(reach);
             const isHolding = !!survivalKeys['KeyE'];
 
             if (bestTree) {
@@ -14967,14 +15516,20 @@ let scene, camera, renderer, controls, raycaster, mouse, ground, grid;
                         bestTree.userData.hp = 9999;
                         survivalWood += 2;
                         addSurvivalItem('wood', 2);
-                        const foundApple = Math.random() < 0.21;
+                        const foundApple = Math.random() < survivalSettings.appleRarity / 100;
+                        const treeSpecies = bestTree.userData.species;
+                        const saplingId = SAPLING_SPECIES.includes(treeSpecies) ? `${treeSpecies}-sapling` : null;
+                        const foundSapling = !!saplingId && Math.random() < SAPLING_DROP_CHANCE;
                         if (foundApple) {
                             survivalApples += 1;
                             addSurvivalItem('apple', 1);
                         }
+                        if (foundSapling) addSurvivalItem(saplingId, 1);
                         survivalChopProgress = 0;
                         survivalChopTarget = null;
-                        showSurvivalToast(foundApple ? '+2 🪵 Wood, +1 🍎 Apple' : '+2 🪵 Wood');
+                        let toast = foundApple ? '+2 🪵 Wood, +1 🍎 Apple' : '+2 🪵 Wood';
+                        if (foundSapling) toast += `, +1 🌱 ${TREE_DISPLAY_NAMES[treeSpecies]} Sapling`;
+                        showSurvivalToast(toast);
                         updateSurvivalHud();
                     }
                 } else {
@@ -15002,10 +15557,12 @@ let scene, camera, renderer, controls, raycaster, mouse, ground, grid;
             const selected = selectedSurvivalItem();
             const selectedDef = selected ? SURVIVAL_ITEM_DEFS[selected.id] : null;
             if (selectedDef && selectedDef.food && survivalHp < 100) {
-                if (isHolding) {
-                    eatSelectedSurvivalFood();
-                }
-                prompt.innerText = `Hold E or right click to eat ${selectedDef.name}`;
+                prompt.innerText = `Press E or right click to eat ${selectedDef.name}`;
+                prompt.classList.add('visible');
+                return;
+            }
+            if (selectedDef && selectedDef.sapling) {
+                prompt.innerText = `Click ground or press E to plant ${selectedDef.name}`;
                 prompt.classList.add('visible');
                 return;
             }

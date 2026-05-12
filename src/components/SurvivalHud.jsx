@@ -40,6 +40,81 @@ export function SurvivalHud() {
         <button className="exit-btn" id="survival-exit">
           Exit
         </button>
+        <button className="settings-btn" id="survival-settings-btn" type="button" aria-expanded="false">
+          ⚙ Settings
+        </button>
+        <section id="survival-settings-panel" className="survival-settings-panel hidden" aria-label="Survival settings">
+          <h2>Movement for Survival</h2>
+          <div className="setting-row">
+            <span>Movement</span>
+            <div className="setting-toggle" role="group" aria-label="Movement keys">
+              <button
+                type="button"
+                className="selected"
+                data-survival-movement="wasd"
+                id="survival-movement-wasd"
+              >
+                W A S D
+              </button>
+              <button type="button" data-survival-movement="arrows" id="survival-movement-arrows">
+                Arrow Keys
+              </button>
+            </div>
+          </div>
+          <div className="setting-row">
+            <span>Looking Around</span>
+            <strong id="survival-look-setting">Arrow Keys</strong>
+          </div>
+          <h2>World Settings</h2>
+          {[
+            ["deer", "Deer speed", 67],
+            ["bear", "Bear speed", 30],
+            ["wolf", "Wolf speed", 80],
+            ["cow", "Cow speed", 16],
+            ["rabbit", "Rabbit speed", 86],
+          ].map(([species, label, value]) => (
+            <label className="setting-row setting-range" key={species}>
+              <span>
+                {label}: <strong id={`survival-animal-speed-${species}-value`}>{value}/100</strong>
+              </span>
+              <input
+                type="range"
+                min="0"
+                max="100"
+                defaultValue={value}
+                data-survival-animal-speed={species}
+                aria-label={label}
+              />
+            </label>
+          ))}
+          <label className="setting-row setting-range">
+            <span>
+              Apple rarity: <strong id="survival-apple-rarity-value">21%</strong>
+            </span>
+            <input
+              type="range"
+              min="0"
+              max="100"
+              defaultValue="21"
+              data-survival-setting="appleRarity"
+              aria-label="Apple rarity"
+            />
+          </label>
+          <label className="setting-row setting-range">
+            <span>
+              Sapling growth: <strong id="survival-sapling-growth-value">120 sec.</strong>
+            </span>
+            <input
+              type="range"
+              min="5"
+              max="300"
+              step="5"
+              defaultValue="120"
+              data-survival-setting="saplingGrowSeconds"
+              aria-label="Sapling growth speed"
+            />
+          </label>
+        </section>
       </div>
 
       <div id="survival-controls">

@@ -34,6 +34,7 @@ const destroyTools = [
   ["btn-leviathan", "🐉", "Leviathan"],
   ["btn-kraken", "🦑", "Kraken"],
   ["btn-maw", "🦷", "Maw"],
+  ["btn-sea-eater", "🕳️", "Sea Eater"],
   ["btn-human-eater", "🌿", "Human Eater"],
   ["btn-titanx", "🐍", "Sky Leviathan"],
 ];

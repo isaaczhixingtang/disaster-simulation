@@ -79,7 +79,8 @@ export function ModeOverlays() {
                 to look around.
               </p>
               <p>
-                How to move in Survival Mode: W, A, S, D to move around. Arrow keys to look around.
+                How to move in Survival Mode: W, A, S, D to move around by default. Arrow keys to
+                look around. Use Survival settings to swap movement to arrow keys.
               </p>
             </article>
             <article>
